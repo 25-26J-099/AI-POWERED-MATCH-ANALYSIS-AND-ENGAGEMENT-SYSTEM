@@ -6,4 +6,6 @@ echo "__pycache__/
 data/
 .DS_Store
 node_modules/
+venv/
+*.egg-info/
 " > .gitignore

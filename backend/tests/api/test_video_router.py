@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from fastapi_app.main import app
-from fastapi_app.services.dependencies import job_service
+from app.main import app
+from app.services.dependencies import job_service
 
 
 @pytest.fixture(autouse=True)

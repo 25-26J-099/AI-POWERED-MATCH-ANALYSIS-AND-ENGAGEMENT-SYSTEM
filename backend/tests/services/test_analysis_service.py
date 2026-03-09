@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi_app.services.analysis_service import AnalysisRequestOptions, AnalysisService
+from app.services.analysis_service import AnalysisRequestOptions, AnalysisService
 
 
 def test_build_pipeline_config_matches_expected_defaults(tmp_path: Path):

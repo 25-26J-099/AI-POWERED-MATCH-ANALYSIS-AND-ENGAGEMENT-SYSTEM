@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from fastapi_app.services.artifact_service import ArtifactService
-from fastapi_app.services.job_service import JobRecord
+from app.services.artifact_service import ArtifactService
+from app.services.job_service import JobRecord
 
 
 def test_artifact_path_validation_and_safety(tmp_path: Path):

@@ -1,8 +1,8 @@
 import time
 from pathlib import Path
 
-from fastapi_app.services.analysis_service import AnalysisRequestOptions
-from fastapi_app.services.job_service import JobService
+from app.services.analysis_service import AnalysisRequestOptions
+from app.services.job_service import JobService
 
 
 class StubAnalysisService:

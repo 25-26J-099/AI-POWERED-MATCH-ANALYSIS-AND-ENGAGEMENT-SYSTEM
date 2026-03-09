@@ -1,0 +1,11 @@
+echo "__pycache__/
+*.pt
+*.pkl
+*.log
+*.env
+data/
+.DS_Store
+node_modules/
+venv/
+*.egg-info/
+" > .gitignore

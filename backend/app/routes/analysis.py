@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.database import get_db
-from app.models.models import Match
+from app.routes.matches import build_match_analytics
 from app.services.openai_client import generate_expert_analysis
 
 router = APIRouter()
@@ -14,10 +14,7 @@ router = APIRouter()
 @router.post("/match/{match_id}/ai-analysis")
 async def ai_analysis(match_id: int, db: AsyncSession = Depends(get_db)):
     """Generate AI expert analysis using match analytics data."""
-    from app.routes.matches import get_match_analytics
-
-    # Reuse the analytics endpoint logic
-    analytics_data = await get_match_analytics(match_id, db)
+    analytics_data = await build_match_analytics(match_id, db)
 
     try:
         analysis = await generate_expert_analysis(analytics_data)

@@ -1,12 +1,10 @@
 """SQLAlchemy ORM models for the football analysis platform."""
 
-import uuid
 from datetime import datetime, date
 from typing import Optional
 
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, Text, Date, DateTime,
-    ForeignKey, JSON, Enum as SAEnum,
+    Integer, String, Float, Text, Date, DateTime, ForeignKey, JSON,
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from app.database.database import Base
@@ -24,9 +22,11 @@ class Match(Base):
     away_team_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("teams.id"), nullable=True)
     video_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     commentary_video_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    tracking_job_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, unique=True)
+    tracking_artifacts: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(
-        String(50), default="uploaded",
-        doc="Pipeline status: uploaded | tracking | detecting | analyzing | commentary | completed | failed",
+        String(50), default="uploading",
+        doc="Pipeline status: uploading | tracking | analytics_processing | commentary_generation | completed | failed",
     )
     status_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True, doc="Detailed status message")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

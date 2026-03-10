@@ -2,17 +2,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
 from app.models.schemas import (
-    AnalyzePathRequest,
-    AnalysisResultResponse,
-    EventListResponse,
-    JobCreatedResponse,
-    JobStatusResponse,
+    AnalyzePathRequest, AnalysisResultResponse, EventListResponse, JobCreatedResponse, JobStatusResponse,
 )
 from app.services.analysis_service import AnalysisRequestOptions
 from app.services.artifact_service import ArtifactService
@@ -71,81 +66,6 @@ def analyze_video_by_path(
             input_path=payload.input_path,
             options=options,
             output_name=payload.output_name,
-        )
-    except FileNotFoundError as exc:
-        job_service.delete_job(record.job_id)
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        job_service.delete_job(record.job_id)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _to_job_created_response(request, record.job_id, record.submitted_at)
-
-
-@router.post(
-    "/analyze/upload",
-    response_model=JobCreatedResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-async def analyze_video_upload(
-    request: Request,
-    file: UploadFile = File(...),
-    output_name: Optional[str] = Form(None),
-    model: str = Form("yolov8n.pt"),
-    confidence: float = Form(0.3),
-    device: str = Form("auto"),
-    frame_skip: int = Form(1),
-    max_width: int = Form(1280),
-    max_height: int = Form(720),
-    enable_stabilization: bool = Form(True),
-    enable_reid: bool = Form(True),
-    enable_events: bool = Form(True),
-    enable_minimap: bool = Form(True),
-    enable_freeze_frames: bool = Form(True),
-    quiet: bool = Form(False),
-    enable_ml_detector: bool = Form(False),
-    ml_model_path: Optional[str] = Form(None),
-    ml_confidence: float = Form(0.7),
-    ml_device: str = Form("auto"),
-    job_service: JobService = Depends(get_job_service),
-) -> JobCreatedResponse:
-    record = job_service.create_job()
-    upload_path = job_service.get_job_input_path(record.job_id, file.filename or "uploaded_video.mp4")
-
-    try:
-        with upload_path.open("wb") as outfile:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                outfile.write(chunk)
-    finally:
-        await file.close()
-
-    options = AnalysisRequestOptions(
-        model=model,
-        confidence=confidence,
-        device=device,
-        frame_skip=frame_skip,
-        max_width=max_width,
-        max_height=max_height,
-        enable_stabilization=enable_stabilization,
-        enable_reid=enable_reid,
-        enable_events=enable_events,
-        enable_minimap=enable_minimap,
-        enable_freeze_frames=enable_freeze_frames,
-        quiet=quiet,
-        enable_ml_detector=enable_ml_detector,
-        ml_model_path=ml_model_path,
-        ml_confidence=ml_confidence,
-        ml_device=ml_device,
-    )
-
-    try:
-        job_service.start_job(
-            job_id=record.job_id,
-            input_path=upload_path,
-            options=options,
-            output_name=output_name,
         )
     except FileNotFoundError as exc:
         job_service.delete_job(record.job_id)

@@ -1,20 +1,19 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { getMatchStatus } from '../api/client';
 
 const PIPELINE_STAGES = [
-    { key: 'uploaded', label: 'Video Uploaded', icon: '📤' },
-    { key: 'tracking', label: 'Tracking Players', icon: '🎯' },
-    { key: 'detecting', label: 'Detecting Events', icon: '⚡' },
-    { key: 'analyzing', label: 'Computing Analytics', icon: '📊' },
-    { key: 'commentary', label: 'Generating Commentary', icon: '🎙️' },
+    { key: 'uploading', label: 'Uploading Video', icon: '📤' },
+    { key: 'tracking', label: 'Tracking Players and Events', icon: '🎯' },
+    { key: 'analytics_processing', label: 'Computing Analytics', icon: '📊' },
+    { key: 'commentary_generation', label: 'Preparing Commentary Export', icon: '🎙️' },
     { key: 'completed', label: 'Analysis Complete', icon: '✅' },
 ];
 
 export default function Processing() {
     const { id } = useParams();
     const navigate = useNavigate();
-    const [status, setStatus] = useState('uploaded');
+    const [status, setStatus] = useState('uploading');
     const [detail, setDetail] = useState('');
     const [error, setError] = useState(false);
 
@@ -39,30 +38,38 @@ export default function Processing() {
         return () => clearInterval(poll);
     }, [id, navigate]);
 
-    const currentIndex = PIPELINE_STAGES.findIndex(s => s.key === status);
+    const currentIndex = PIPELINE_STAGES.findIndex((stage) => stage.key === status);
 
     return (
         <div className="page-container" style={{ maxWidth: '700px', margin: '0 auto', paddingTop: '48px' }}>
             <h1 className="page-title" style={{ textAlign: 'center' }}>Processing Match</h1>
             <p className="page-subtitle" style={{ textAlign: 'center' }}>
-                Our AI pipeline is analyzing your match video
+                Component 1 tracking and Component 4 analytics are running in sequence.
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '40px' }}>
-                {PIPELINE_STAGES.map((stage, i) => {
+                {PIPELINE_STAGES.map((stage, index) => {
                     let state: 'pending' | 'active' | 'completed' | 'failed' = 'pending';
-                    if (error && i === currentIndex) state = 'failed';
-                    else if (i < currentIndex) state = 'completed';
-                    else if (i === currentIndex) state = status === 'completed' ? 'completed' : 'active';
+                    if (error && index === currentIndex) {
+                        state = 'failed';
+                    } else if (index < currentIndex) {
+                        state = 'completed';
+                    } else if (index === currentIndex) {
+                        state = status === 'completed' ? 'completed' : 'active';
+                    }
 
                     return (
-                        <div key={stage.key} className={`pipeline-step ${state}`}
-                            style={{ animationDelay: `${i * 0.1}s` }}>
+                        <div key={stage.key} className={`pipeline-step ${state}`} style={{ animationDelay: `${index * 0.1}s` }}>
                             <div className={`step-indicator ${state}`}>
                                 {state === 'completed' ? '✓' : state === 'failed' ? '✗' : stage.icon}
                             </div>
                             <div>
-                                <div style={{ fontWeight: 600, color: state === 'pending' ? 'var(--text-muted)' : 'var(--text-primary)' }}>
+                                <div
+                                    style={{
+                                        fontWeight: 600,
+                                        color: state === 'pending' ? 'var(--text-muted)' : 'var(--text-primary)',
+                                    }}
+                                >
                                     {stage.label}
                                 </div>
                                 {state === 'active' && detail && (

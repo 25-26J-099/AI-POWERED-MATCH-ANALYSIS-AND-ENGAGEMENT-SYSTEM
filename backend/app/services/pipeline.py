@@ -39,7 +39,7 @@ async def run_full_pipeline(match_id: int):
     async with async_session() as session:
         try:
             # ── Step 1: Retrieve events ──────────────────────────────────
-            await _update_status(session, match_id, "detecting", "Processing event data...")
+            await _update_status(session, match_id, "analytics_processing", "Preparing event data for analytics...")
 
             result = await session.execute(
                 select(Event).where(Event.match_id == match_id).order_by(Event.period, Event.minute, Event.second)
@@ -51,7 +51,16 @@ async def run_full_pipeline(match_id: int):
                 return
 
             # ── Step 2: Compute analytics ────────────────────────────────
-            await _update_status(session, match_id, "analyzing", "Computing xT, xG, VAEP, and player statistics...")
+            await _update_status(
+                session,
+                match_id,
+                "analytics_processing",
+                "Computing xT, xG, VAEP, player statistics, and heatmaps...",
+            )
+
+            await session.execute(PlayerStats.__table__.delete().where(PlayerStats.match_id == match_id))
+            await session.execute(PlayerEmbedding.__table__.delete().where(PlayerEmbedding.match_id == match_id))
+            await session.commit()
 
             # Group events by player
             player_events_map = defaultdict(list)
@@ -117,7 +126,12 @@ async def run_full_pipeline(match_id: int):
             await session.flush()
 
             # ── Step 3: Style embeddings ─────────────────────────────────
-            await _update_status(session, match_id, "analyzing", "Computing player style embeddings...")
+            await _update_status(
+                session,
+                match_id,
+                "analytics_processing",
+                "Computing player style embeddings and ratings...",
+            )
 
             try:
                 embedding_results = compute_embeddings(players_embedding_data)
@@ -139,7 +153,12 @@ async def run_full_pipeline(match_id: int):
             await session.commit()
 
             # ── Step 4: Commentary ───────────────────────────────────────
-            await _update_status(session, match_id, "commentary", "Generating commentary video...")
+            await _update_status(
+                session,
+                match_id,
+                "commentary_generation",
+                "Analytics ready. Waiting for commentary components to consume export data...",
+            )
 
             # Commentary is handled by external components merged via GitHub.
             # Placeholder: once commentary video is ready, update the path.

@@ -1,40 +1,83 @@
-"""FastAPI application entrypoint."""
+"""FastAPI application entrypoint for the merged full-stack system."""
 from __future__ import annotations
 
 import logging
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from app.routes.video import router as video_router
+from app.config.settings import settings
+from app.database.database import init_db
+from app.routes import (
+    analysis,
+    analytics,
+    commentary_export,
+    embeddings,
+    lineups,
+    matches,
+    players,
+    upload,
+    video,
+)
 from app.services.dependencies import get_job_service
 
 logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    os.makedirs(settings.COMMENTARY_DIR, exist_ok=True)
+    os.makedirs(settings.HF_CACHE_DIR, exist_ok=True)
+    await init_db()
+    logger.info("Merged football analysis API started")
+    yield
+    get_job_service().shutdown()
+    logger.info("Merged football analysis API shutdown complete")
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Football Analysis API",
+        title="Football Analysis Platform",
+        description="Merged tracking, analytics, and frontend backend for football analysis.",
         version="1.0.0",
-        description="Async FastAPI wrapper for the football analysis pipeline.",
+        lifespan=lifespan,
     )
 
-    app.include_router(video_router, prefix="/api/v1/video", tags=["video"])
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.include_router(upload.router, tags=["Upload"])
+    app.include_router(matches.router, tags=["Matches"])
+    app.include_router(players.router, tags=["Players"])
+    app.include_router(analytics.router, tags=["Analytics"])
+    app.include_router(commentary_export.router, tags=["Commentary Export"])
+    app.include_router(lineups.router, tags=["Lineups"])
+    app.include_router(embeddings.router, tags=["Embeddings"])
+    app.include_router(analysis.router, tags=["AI Analysis"])
+    app.include_router(video.router, prefix="/api/v1/video", tags=["Tracking"])
+
+    static_dirs = {
+        "/static/uploads": Path(settings.UPLOAD_DIR),
+        "/static/commentary": Path(settings.COMMENTARY_DIR),
+    }
+    for mount_path, directory in static_dirs.items():
+        app.mount(mount_path, StaticFiles(directory=str(directory)), name=mount_path.replace("/", "_"))
 
     @app.get("/health")
-    def health() -> dict:
-        return {"status": "ok", "service": "football-analysis-api", "version": "1.0.0"}
-
-    @app.on_event("startup")
-    def on_startup() -> None:
-        logger.info("Football Analysis API started")
-
-    @app.on_event("shutdown")
-    def on_shutdown() -> None:
-        get_job_service().shutdown()
-        logger.info("Football Analysis API shutdown complete")
+    async def health() -> dict:
+        return {"status": "ok", "service": "football-analysis-platform", "version": "1.0.0"}
 
     return app
 
 
 app = create_app()
-

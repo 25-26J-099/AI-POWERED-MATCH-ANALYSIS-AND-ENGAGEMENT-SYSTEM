@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.database import async_session
-from app.models.models import Match, Event, Player, PlayerStats, PlayerEmbedding
+from app.models.models import Match, Event, Player, Team, PlayerStats, PlayerEmbedding
 from app.services.event_parser import parse_events
 from app.analytics.player_stats import compute_player_stats
 from app.analytics.ratings import compute_rating
@@ -169,7 +169,7 @@ async def ingest_events(match_id: int, raw_events: list[dict]):
 
         # Add teams first (for FK refs)
         for team in new_teams:
-            existing = await session.execute(select(Player).where(Player.name == team.name))
+            existing = await session.execute(select(Team).where(Team.name == team.name))
             if not existing.scalar_one_or_none():
                 session.add(team)
         await session.flush()

@@ -27,8 +27,13 @@ def _extract_features_from_event(event: dict) -> Optional[dict]:
     distance = math.sqrt((goal_x - x) ** 2 + (goal_y - y) ** 2)
     angle = math.atan2(abs(goal_y - y), abs(goal_x - x))
 
-    # Extract freeze frame data
-    freeze_frame = event.get("freeze_frame", [])
+    # Extract freeze frame data — supports both nested {event_frame, players}
+    # format (Component 1) and flat list format (StatsBomb raw)
+    freeze_frame_raw = event.get("freeze_frame", [])
+    if isinstance(freeze_frame_raw, dict):
+        freeze_frame = freeze_frame_raw.get("players", [])
+    else:
+        freeze_frame = freeze_frame_raw
     has_360 = len(freeze_frame) > 0
 
     # Defaults for when no freeze frame

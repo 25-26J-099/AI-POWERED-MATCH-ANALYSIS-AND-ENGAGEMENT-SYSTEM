@@ -49,7 +49,8 @@ def _extract_player_features(
     defenders_ahead_counts = []
 
     for e in player_events:
-        ff = e.get("freeze_frame", [])
+        ff_raw = e.get("freeze_frame", [])
+        ff = ff_raw.get("players", []) if isinstance(ff_raw, dict) else ff_raw
         if not ff:
             continue
         loc = e.get("location", [0, 0])

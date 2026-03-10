@@ -98,9 +98,15 @@ class Event(Base):
 
     @property
     def freeze_frame(self) -> list[dict]:
-        """Extract freeze frame from raw event data."""
+        """Extract freeze frame players from raw event data.
+
+        Handles both Component 1 format ({event_frame, players}) and flat list format.
+        """
         if self.raw_data and "freeze_frame" in self.raw_data:
-            return self.raw_data["freeze_frame"]
+            ff = self.raw_data["freeze_frame"]
+            if isinstance(ff, dict):
+                return ff.get("players", [])
+            return ff
         return []
 
     @property

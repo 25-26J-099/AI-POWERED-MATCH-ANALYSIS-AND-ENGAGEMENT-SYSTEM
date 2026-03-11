@@ -34,6 +34,11 @@ data/
 *.pkl
 *.onnx
 weights/
+*.gguf
+**/Modelfile
+**/modelfile
+**/Modelfile.*
+**/modelfile.*
 
 # Logs
 *.log

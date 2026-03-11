@@ -17,12 +17,17 @@ _models_loaded = False
 
 def _download_from_hf(repo_id: str, filename: str) -> Optional[str]:
     """Download a file from HuggingFace Hub, return local path."""
+    # Skip placeholder repos that will never resolve
+    if not repo_id or repo_id.startswith("your-org/") or "/" not in repo_id:
+        return None
     try:
         from huggingface_hub import hf_hub_download
         return hf_hub_download(
             repo_id=repo_id,
             filename=filename,
             cache_dir=settings.HF_CACHE_DIR,
+            force_download=False,
+            local_files_only=False,
         )
     except Exception as e:
         print(f"⚠️  Could not download {filename} from {repo_id}: {e}")

@@ -36,6 +36,10 @@ async def run_full_pipeline(match_id: int):
         7. (Commentary) — triggers external components
         8. Mark complete
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("🚀 run_full_pipeline started for match_id=%s", match_id)
+
     async with async_session() as session:
         try:
             # ── Step 1: Retrieve events ──────────────────────────────────
@@ -46,7 +50,10 @@ async def run_full_pipeline(match_id: int):
             )
             events = result.scalars().all()
 
+            logger.info("📊 match_id=%s: Found %s events in DB", match_id, len(events))
+
             if not events:
+                logger.warning("⚠️ match_id=%s: No events found, marking as failed", match_id)
                 await _update_status(session, match_id, "failed", "No events found for this match.")
                 return
 
@@ -64,15 +71,31 @@ async def run_full_pipeline(match_id: int):
 
             # Group events by player
             player_events_map = defaultdict(list)
+            events_without_player = 0
             for event in events:
                 if event.player_id and event.raw_data:
                     player_events_map[event.player_id].append(event.raw_data)
+                elif not event.player_id:
+                    events_without_player += 1
+
+            logger.info(
+                "📊 match_id=%s: Grouped events into %s players (%s events without player_id)",
+                match_id, len(player_events_map), events_without_player,
+            )
+
+            if not player_events_map:
+                logger.warning(
+                    "⚠️ match_id=%s: No events have player_id set — analytics will be empty. "
+                    "Check event ingestion (event_parser + pipeline.ingest_events).",
+                    match_id,
+                )
 
             # Compute stats for each player
             player_stats_records = []
             players_embedding_data = []
 
             for player_id, player_raw_events in player_events_map.items():
+                logger.info("  → Computing stats for player_id=%s (%s events)", player_id, len(player_raw_events))
                 stats = compute_player_stats(player_raw_events)
 
                 rating = compute_rating(
@@ -124,6 +147,11 @@ async def run_full_pipeline(match_id: int):
                 })
 
             await session.flush()
+            logger.info("📊 match_id=%s: Flushed %s player stats records", match_id, len(player_stats_records))
+
+            # Commit player stats first (safe checkpoint)
+            await session.commit()
+            logger.info("📊 match_id=%s: Player stats committed to DB", match_id)
 
             # ── Step 3: Style embeddings ─────────────────────────────────
             await _update_status(
@@ -133,8 +161,10 @@ async def run_full_pipeline(match_id: int):
                 "Computing player style embeddings and ratings...",
             )
 
+            logger.info("📊 match_id=%s: Starting embedding computation for %s players...", match_id, len(players_embedding_data))
             try:
                 embedding_results = compute_embeddings(players_embedding_data)
+                logger.info("📊 match_id=%s: Embedding computation returned %s results", match_id, len(embedding_results))
                 for emb in embedding_results:
                     pe = PlayerEmbedding(
                         player_id=emb["player_id"],
@@ -147,10 +177,11 @@ async def run_full_pipeline(match_id: int):
                         style_cluster=emb["cluster"],
                     )
                     session.add(pe)
+                await session.commit()
+                logger.info("📊 match_id=%s: Embeddings committed to DB", match_id)
             except Exception as emb_err:
-                print(f"⚠️  Embedding computation failed (non-fatal): {emb_err}")
-
-            await session.commit()
+                logger.warning("⚠️ match_id=%s: Embedding save failed (non-fatal): %s", match_id, emb_err)
+                await session.rollback()
 
             # ── Step 4: Commentary ───────────────────────────────────────
             await _update_status(
@@ -159,6 +190,7 @@ async def run_full_pipeline(match_id: int):
                 "commentary_generation",
                 "Analytics ready. Waiting for commentary components to consume export data...",
             )
+            logger.info("📊 match_id=%s: Commentary stage reached", match_id)
 
             # Commentary is handled by external components merged via GitHub.
             # Placeholder: once commentary video is ready, update the path.
@@ -169,10 +201,13 @@ async def run_full_pipeline(match_id: int):
                 session, match_id, "completed",
                 f"Analysis complete. Processed {len(events)} events for {len(player_events_map)} players."
             )
+            logger.info("✅ match_id=%s: Pipeline complete — %s events, %s players", match_id, len(events), len(player_events_map))
 
         except Exception as e:
             traceback.print_exc()
+            logger.error("❌ match_id=%s: Pipeline error: %s", match_id, e)
             try:
+                await session.rollback()
                 await _update_status(session, match_id, "failed", f"Pipeline error: {str(e)}")
             except Exception:
                 pass
@@ -183,8 +218,13 @@ async def ingest_events(match_id: int, raw_events: list[dict]):
 
     Called by the pipeline when events are received.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("📥 ingest_events: match_id=%s, %s raw events received", match_id, len(raw_events))
+
     async with async_session() as session:
         events, new_players, new_teams = parse_events(raw_events, match_id)
+        logger.info("📥 ingest_events: parsed → %s events, %s new players, %s new teams", len(events), len(new_players), len(new_teams))
 
         # Add teams first (for FK refs)
         for team in new_teams:
@@ -193,18 +233,53 @@ async def ingest_events(match_id: int, raw_events: list[dict]):
                 session.add(team)
         await session.flush()
 
-        # Add players
+        # Build team name→id map from DB
+        team_rows = await session.execute(select(Team))
+        team_map = {team.name: team.id for team in team_rows.scalars().all()}
+
+        # Add players and link them to their teams
         for player in new_players:
             existing = await session.execute(select(Player).where(Player.name == player.name))
             if not existing.scalar_one_or_none():
+                # Try to find which team this player belongs to by checking events
+                for raw in raw_events:
+                    p_raw = raw.get("player", {})
+                    t_raw = raw.get("team", {})
+                    p_name = p_raw.get("name", "") if p_raw else ""
+                    p_id = p_raw.get("id") if p_raw else None
+                    t_name = t_raw.get("name", "") if t_raw else ""
+                    t_id = t_raw.get("id") if t_raw else None
+                    # Match by player name or by generated temporary name
+                    if p_name == player.name or (not p_name and p_id and f"Player {p_id}" in player.name):
+                        # Resolve team name (could be real or generated)
+                        resolved_team_name = t_name
+                        if not resolved_team_name and t_id:
+                            resolved_team_name = f"Team {t_id}"
+                        if resolved_team_name in team_map:
+                            player.team_id = team_map[resolved_team_name]
+                        break
                 session.add(player)
         await session.flush()
 
+        # Rebuild maps after flush to get DB-assigned IDs
         team_rows = await session.execute(select(Team))
         team_map = {team.name: team.id for team in team_rows.scalars().all()}
 
         player_rows = await session.execute(select(Player))
         player_map = {player.name: player.id for player in player_rows.scalars().all()}
+
+        logger.info("📥 ingest_events: team_map=%s", team_map)
+        logger.info("📥 ingest_events: player_map=%s", player_map)
+
+        # Set match home/away team IDs if not already set
+        match_result = await session.execute(select(Match).where(Match.id == match_id))
+        match = match_result.scalar_one_or_none()
+        if match:
+            distinct_team_ids = list(dict.fromkeys(team_map.values()))  # preserve insertion order, deduplicate
+            if not match.home_team_id and len(distinct_team_ids) >= 1:
+                match.home_team_id = distinct_team_ids[0]
+            if not match.away_team_id and len(distinct_team_ids) >= 2:
+                match.away_team_id = distinct_team_ids[1]
 
         # Add events
         for event in events:
@@ -212,9 +287,38 @@ async def ingest_events(match_id: int, raw_events: list[dict]):
             raw_player = (event.raw_data or {}).get("player", {})
             team_name = raw_team.get("name") if isinstance(raw_team, dict) else None
             player_name = raw_player.get("name") if isinstance(raw_player, dict) else None
-            event.team_id = team_map.get(team_name)
-            event.player_id = player_map.get(player_name)
+
+            # Resolve team: try real name first, then generated temporary name
+            resolved_team_id = team_map.get(team_name) if team_name else None
+            if resolved_team_id is None and isinstance(raw_team, dict):
+                tid = raw_team.get("id")
+                if tid:
+                    resolved_team_id = team_map.get(f"Team {tid}")
+            event.team_id = resolved_team_id
+
+            # Resolve player: try real name first, then generated temporary name
+            resolved_player_id = player_map.get(player_name) if player_name else None
+            if resolved_player_id is None and isinstance(raw_player, dict):
+                pid = raw_player.get("id")
+                if pid:
+                    # Check both plain and team-prefixed formats
+                    resolved_player_id = player_map.get(f"Player {pid}")
+                    if resolved_player_id is None:
+                        # Try team-prefixed format
+                        for pname, p_id in player_map.items():
+                            if pname.endswith(f"Player {pid}"):
+                                resolved_player_id = p_id
+                                break
+            event.player_id = resolved_player_id
             session.add(event)
         await session.commit()
 
+        events_with_player = sum(1 for e in events if e.player_id is not None)
+        events_with_team = sum(1 for e in events if e.team_id is not None)
+        logger.info(
+            "📥 ingest_events: committed %s events (%s with player_id, %s with team_id)",
+            len(events), events_with_player, events_with_team,
+        )
+
         return len(events)
+

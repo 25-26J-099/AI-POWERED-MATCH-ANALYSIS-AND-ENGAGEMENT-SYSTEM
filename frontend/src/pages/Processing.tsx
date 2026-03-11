@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { getMatchStatus } from '../api/client';
 
 const PIPELINE_STAGES = [
+    { key: 'lineup_pending', label: 'Lineup Setup', icon: '📋' },
     { key: 'uploading', label: 'Uploading Video', icon: '📤' },
     { key: 'tracking', label: 'Tracking Players and Events', icon: '🎯' },
     { key: 'analytics_processing', label: 'Computing Analytics', icon: '📊' },

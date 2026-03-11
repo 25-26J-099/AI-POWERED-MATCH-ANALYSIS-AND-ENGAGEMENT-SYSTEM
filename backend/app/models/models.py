@@ -4,7 +4,7 @@ from datetime import datetime, date
 from typing import Optional
 
 from sqlalchemy import (
-    Integer, String, Float, Text, Date, DateTime, ForeignKey, JSON,
+    Integer, String, Float, Text, Date, DateTime, ForeignKey, JSON, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from app.database.database import Base
@@ -148,8 +148,8 @@ class PlayerStats(Base):
     rating: Mapped[float] = mapped_column(Float, default=0.0)
 
     # Relationships
-    player = relationship("Player", back_populates="stats")
-    match = relationship("Match", back_populates="player_stats")
+    player = relationship("Player", back_populates="stats", lazy="selectin")
+    match = relationship("Match", back_populates="player_stats", lazy="selectin")
 
 
 # ── Player Embeddings ─────────────────────────────────────────────────────
@@ -159,7 +159,7 @@ class PlayerEmbedding(Base):
     __tablename__ = "player_embeddings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    player_id: Mapped[int] = mapped_column(Integer, ForeignKey("players.id"), nullable=False, unique=True)
+    player_id: Mapped[int] = mapped_column(Integer, ForeignKey("players.id"), nullable=False)
     match_id: Mapped[int] = mapped_column(Integer, ForeignKey("matches.id"), nullable=False)
     embedding_vector: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, doc="Style embedding vector")
     umap_x: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -168,7 +168,9 @@ class PlayerEmbedding(Base):
     tsne_y: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     style_cluster: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
-    player = relationship("Player", back_populates="embedding")
+    __table_args__ = (UniqueConstraint("player_id", "match_id", name="uq_embedding_player_match"),)
+
+    player = relationship("Player", back_populates="embedding", lazy="selectin")
 
 
 # ── Lineups ───────────────────────────────────────────────────────────────

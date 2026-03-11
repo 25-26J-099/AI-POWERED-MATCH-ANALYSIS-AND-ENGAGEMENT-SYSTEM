@@ -30,7 +30,7 @@ export default function Upload() {
         setError('');
         try {
             const response = await uploadVideo(file, setProgress);
-            navigate(`/processing/${response.data.match_id}`);
+            navigate(`/lineup/${response.data.match_id}`);
         } catch (err: any) {
             setError(err.response?.data?.detail || 'Upload failed');
         } finally {

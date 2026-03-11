@@ -54,27 +54,16 @@ def parse_events(
         else:
             event_type = str(event_type_raw)
 
-        # Player
-        player_raw = raw.get("player", {})
-        player_id = None
-        if player_raw:
-            player_name = player_raw.get("name", "")
-            pid = _normalize_external_id(player_raw.get("id"))
-            if player_name and player_name not in existing_players:
-                # Create new player
-                player = Player(name=player_name, position=raw.get("position", {}).get("name") if isinstance(raw.get("position"), dict) else None)
-                if pid is not None:
-                    player.id = pid
-                new_players.append(player)
-                existing_players[player_name] = pid
-            player_id = existing_players.get(player_name)
-
-        # Team
+        # Team (parse before player so we can include team context in player name)
         team_raw = raw.get("team", {})
         team_id = None
+        team_name = ""
         if team_raw:
             team_name = team_raw.get("name", "")
             tid = _normalize_external_id(team_raw.get("id"))
+            # Generate temporary team name from numeric ID if name is missing
+            if not team_name and tid is not None:
+                team_name = f"Team {tid}"
             if team_name and team_name not in existing_teams:
                 team = Team(name=team_name)
                 if tid is not None:
@@ -82,6 +71,30 @@ def parse_events(
                 new_teams.append(team)
                 existing_teams[team_name] = tid
             team_id = existing_teams.get(team_name)
+
+        # Player
+        player_raw = raw.get("player", {})
+        player_id = None
+        if player_raw:
+            player_name = player_raw.get("name", "")
+            pid = _normalize_external_id(player_raw.get("id"))
+            # Generate temporary player name from numeric ID if name is missing
+            if not player_name and pid is not None:
+                if team_name:
+                    player_name = f"{team_name} - Player {pid}"
+                else:
+                    player_name = f"Player {pid}"
+            if player_name and player_name not in existing_players:
+                # Create new player
+                player = Player(
+                    name=player_name,
+                    position=raw.get("position", {}).get("name") if isinstance(raw.get("position"), dict) else None,
+                )
+                if pid is not None:
+                    player.id = pid
+                new_players.append(player)
+                existing_players[player_name] = pid
+            player_id = existing_players.get(player_name)
 
         # Location
         location = raw.get("location", [])

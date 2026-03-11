@@ -10,6 +10,7 @@ import PlayerComparison from './pages/PlayerComparison';
 import StyleMap from './pages/StyleMap';
 import AiAnalysis from './pages/AiAnalysis';
 import Commentary from './pages/Commentary';
+import LineupSetup from './pages/LineupSetup';
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/upload" element={<Upload />} />
+          <Route path="/lineup/:id" element={<LineupSetup />} />
           <Route path="/processing/:id" element={<Processing />} />
           <Route path="/match/:id" element={<MatchDashboard />} />
           <Route path="/match/:id/player/:playerId" element={<PlayerAnalysis />} />

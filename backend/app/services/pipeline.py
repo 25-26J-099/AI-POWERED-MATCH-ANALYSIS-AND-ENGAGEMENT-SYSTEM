@@ -222,8 +222,21 @@ async def ingest_events(match_id: int, raw_events: list[dict]):
     logger = logging.getLogger(__name__)
     logger.info("📥 ingest_events: match_id=%s, %s raw events received", match_id, len(raw_events))
 
+    deduped_raw_events: list[dict] = []
+    seen_event_ids: set[str] = set()
+    for raw_event in raw_events:
+        raw_event_id = str(raw_event.get("id") or "")
+        if raw_event_id and raw_event_id in seen_event_ids:
+            continue
+        if raw_event_id:
+            seen_event_ids.add(raw_event_id)
+        deduped_raw_events.append(raw_event)
+
     async with async_session() as session:
-        events, new_players, new_teams = parse_events(raw_events, match_id)
+        await session.execute(Event.__table__.delete().where(Event.match_id == match_id))
+        await session.commit()
+
+        events, new_players, new_teams = parse_events(deduped_raw_events, match_id)
         logger.info("📥 ingest_events: parsed → %s events, %s new players, %s new teams", len(events), len(new_players), len(new_teams))
 
         # Add teams first (for FK refs)
@@ -251,7 +264,7 @@ async def ingest_events(match_id: int, raw_events: list[dict]):
 
         player_team_name_map: dict[str, str] = {}
         ordered_team_names: list[str] = []
-        for raw in raw_events:
+        for raw in deduped_raw_events:
             resolved_team_name = _resolve_team_name_from_raw(raw)
             if resolved_team_name and resolved_team_name not in ordered_team_names:
                 ordered_team_names.append(resolved_team_name)

@@ -215,31 +215,31 @@ class MatchAnalysisPipeline:
                 player_tracks, ball_track = self.tracker.process_frame(processed, frame_idx)
 
                 # Team fitting (first ~30 frames)
-                self._collect_and_fit_teams(processed, player_tracks)
+                self._collect_and_fit_teams(frame, player_tracks)
 
                 # Continuous team assignment (EVERY frame, not cached)
-                self._assign_teams_continuous(processed, player_tracks)
+                self._assign_teams_continuous(frame, player_tracks)
 
                 # Module 2.5: ROBUST RE-ID - Map ByteTrack IDs to Stable IDs
-                player_tracks = self.robust_reid.process_frame(processed, player_tracks, frame_idx)
+                player_tracks = self.robust_reid.process_frame(frame, player_tracks, frame_idx)
 
                 # Module 3: Re-ID (legacy, kept for lost track gallery)
                 if self.config.reid.enable and self._team_fitted:
                     lost = self.tracker.get_lost_tracks()
                     self.reid_module.update_gallery(
-                        processed, player_tracks, lost, frame_idx
+                        frame, player_tracks, lost, frame_idx
                     )
                 
                 # v4: Module 3.5: ML Event Detection (if enabled)
                 if self._ml_enabled and self.ml_detector:
                     # Update ML detector with current frame
-                    self.ml_detector.update_buffer(processed)
+                    self.ml_detector.update_buffer(frame)
                     
                     # Get ML events (handled by hybrid system)
                     if self.hybrid_event_system:
                         ball_pos = ball_track.center if ball_track and ball_track.frames_lost < 5 else None
                         ml_events = self.hybrid_event_system.detect_events(
-                            processed, ball_pos, player_tracks, frame_idx, self.fps
+                            frame, ball_pos, player_tracks, frame_idx, self.fps
                         )
                         # ML events are added to event detector's event list
                         for ml_event in ml_events:

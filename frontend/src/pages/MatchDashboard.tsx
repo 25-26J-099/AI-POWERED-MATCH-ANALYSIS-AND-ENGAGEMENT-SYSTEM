@@ -8,6 +8,12 @@ export default function MatchDashboard() {
     const [match, setMatch] = useState<any>(null);
     const [analytics, setAnalytics] = useState<any>(null);
     const [events, setEvents] = useState<any[]>([]);
+
+    const formatEventTime = (event: any) => {
+        const minute = Number(event?.minute ?? 0);
+        const second = Number(event?.second ?? 0);
+        return `${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`;
+    };
     const [players, setPlayers] = useState<any[]>([]);
 
     useEffect(() => {
@@ -117,7 +123,7 @@ export default function MatchDashboard() {
                             borderRadius: '8px', alignItems: 'center',
                         }}>
                             <span style={{ color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.85rem', minWidth: '40px' }}>
-                                {e.minute}'
+                                {formatEventTime(e)}
                             </span>
                             <span style={{
                                 padding: '4px 10px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600,

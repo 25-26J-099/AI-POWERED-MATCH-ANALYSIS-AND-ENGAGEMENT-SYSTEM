@@ -61,6 +61,49 @@ FALLBACK_FEATURE_ORDER = [
 ]
 
 
+def _count_events(player_events: List[dict]) -> Counter:
+    return Counter(_event_type_name(event) for event in player_events)
+
+
+def _heuristic_style_cluster(player_payload: Dict) -> int:
+    event_counts = _count_events(player_payload["player_events"])
+    touches = max(float(player_payload.get("touches", 0.0)), 0.0)
+    passes = float(event_counts.get("Pass", 0.0))
+    carries = float(event_counts.get("Carry", 0.0))
+    shots = float(event_counts.get("Shot", 0.0))
+    pressures = float(event_counts.get("Pressure", 0.0))
+    interceptions = float(event_counts.get("Interception", 0.0))
+    recoveries = float(event_counts.get("Ball Recovery", 0.0))
+    dribbles = float(event_counts.get("Dribble", 0.0))
+    miscontrols = float(event_counts.get("Miscontrol", 0.0))
+
+    touch_base = max(touches, 1.0)
+    pass_share = passes / touch_base
+    carry_share = carries / touch_base
+    shot_share = shots / touch_base
+    defensive_actions = pressures + interceptions + recoveries
+    xg = float(player_payload.get("xg", 0.0))
+    xt = float(player_payload.get("xt", 0.0))
+
+    if touches <= 2.0:
+        return 8  # Low Involvement Player
+    if shots >= 2.0 or (shot_share >= 0.28 and xg > 0.05):
+        return 12  # Poacher
+    if defensive_actions >= 3.0 and pass_share < 0.35:
+        return 6  # Ball Winning Midfielder
+    if carry_share >= 0.28 and dribbles >= 1.0:
+        return 5  # Wide Winger
+    if pass_share >= 0.5 and xt >= 0.08:
+        return 10  # Deep Playmaker
+    if pass_share >= 0.38:
+        return 1  # Central Midfielder
+    if xt >= 0.12 and carry_share >= 0.18:
+        return 3  # Attacking Playmaker
+    if pressures >= 2.0 and miscontrols <= 1.0:
+        return 11  # High Press Forward
+    return 7  # Support Midfielder
+
+
 def _freeze_frame_players(event: dict) -> list[dict]:
     freeze_frame_raw = event.get("freeze_frame", [])
     if isinstance(freeze_frame_raw, dict):
@@ -216,6 +259,11 @@ def compute_embeddings(players_data: List[Dict]) -> List[Dict]:
 
         n_clusters = min(4, len(valid_players))
         clusters = KMeans(n_clusters=n_clusters, random_state=42, n_init=10).fit_predict(embeddings)
+
+    unique_clusters, cluster_counts = np.unique(clusters, return_counts=True)
+    largest_cluster = int(cluster_counts.max()) if len(cluster_counts) else 0
+    if len(valid_players) >= 4 and (len(unique_clusters) <= 1 or largest_cluster >= max(len(valid_players) - 1, 4)):
+        clusters = np.array([_heuristic_style_cluster(player) for player in players_data], dtype=int)
 
     umap_coords = _reduce_umap(embeddings)
     tsne_coords = _reduce_tsne(embeddings)

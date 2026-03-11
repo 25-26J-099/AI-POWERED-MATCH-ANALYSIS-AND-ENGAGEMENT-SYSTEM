@@ -76,8 +76,10 @@ class StatsBombExporter:
         event_type = str(data.get("type") or "unknown")
         location = self._convert_coordinates(data.get("position"))
 
-        minute = int(timestamp // 60)
-        second = int(timestamp % 60)
+        total_seconds = max(0, int(timestamp))
+        hour = total_seconds // 3600
+        minute = (total_seconds % 3600) // 60
+        second = total_seconds % 60
 
         # StatsBomb possession is sequence-based, not team-id.
         possession_id = self._update_possession(team_id)
@@ -86,7 +88,7 @@ class StatsBombExporter:
             "id": str(uuid.uuid4()),
             "index": index,
             "period": self._determine_period(timestamp),
-            "timestamp": f"00:{minute:02d}:{second:02d}.000",
+            "timestamp": f"{hour:02d}:{minute:02d}:{second:02d}.000",
             "minute": minute,
             "second": second,
             "type": self._convert_event_type(event_type),

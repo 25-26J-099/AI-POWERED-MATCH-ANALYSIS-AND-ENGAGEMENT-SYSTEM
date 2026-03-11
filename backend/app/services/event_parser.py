@@ -122,7 +122,8 @@ def parse_events(
             parts = timestamp_raw.split(":")
             if len(parts) >= 3:
                 try:
-                    minute = int(parts[1])
+                    hour = int(parts[0])
+                    minute = int(parts[1]) + (hour * 60)
                     second = int(float(parts[2]))
                 except (ValueError, IndexError):
                     pass

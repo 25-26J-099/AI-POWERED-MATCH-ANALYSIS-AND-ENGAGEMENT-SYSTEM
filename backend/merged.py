@@ -414,11 +414,8 @@ def generate_tts_audio(timeline, progress_callback=None):
                 speaker_wav = os.path.join(SCRIPT_DIR, "TTS", "High.mp3")
             else:
                 speaker_wav = os.path.join(SCRIPT_DIR, "TTS", "Neutral.mp3")
-        else: # tactical
-            if entry.get("is_goal"):
-                speaker_wav = os.path.join(SCRIPT_DIR, "TTS", "High.mp3")
-            else:
-                speaker_wav = os.path.join(SCRIPT_DIR, "TTS", "Neutral.mp3")
+        else:  # tactical
+            speaker_wav = os.path.join(SCRIPT_DIR, "TTS", "Tactical.mp3")
 
         # Fallback to Neutral if chosen path is missing somehow
         if not os.path.exists(speaker_wav):

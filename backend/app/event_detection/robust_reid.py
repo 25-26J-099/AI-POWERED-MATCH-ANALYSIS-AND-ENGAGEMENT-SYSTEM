@@ -57,6 +57,15 @@ class DeepFeatureExtractor:
         
         # Try to load ResNet
         try:
+            # Fix SSL certificate issue on macOS for PyTorch model download
+            import ssl
+            try:
+                _create_unverified_https_context = ssl._create_unverified_context
+            except AttributeError:
+                pass
+            else:
+                ssl._create_default_https_context = _create_unverified_https_context
+            
             self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
             self.model = models.resnet18(pretrained=True)
             # Remove final classification layer

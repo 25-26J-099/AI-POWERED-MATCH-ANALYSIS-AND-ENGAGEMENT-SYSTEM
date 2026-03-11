@@ -1,0 +1,88 @@
+diff --git a/backend/modules/video_preprocessor.py b/backend/app/event_detection/video_preprocessor.py
+index dcb31d6..474273a 100644
+--- a/backend/modules/video_preprocessor.py
++++ b/backend/app/event_detection/video_preprocessor.py
+@@ -13,6 +13,9 @@ import numpy as np
+ import logging
+ from typing import List, Optional, Tuple
+ 
++from app.config.settings import settings
++from app.services.model_loader import download_hf_asset
++
+ logger = logging.getLogger(__name__)
+ 
+ 
+@@ -209,12 +212,26 @@ class SuperResolutionEnhancer:
+                 self._initialized = True
+                 logger.info(f"SR model loaded: {model_file}")
+                 return True
+-            else:
+-                logger.info(
+-                    f"SR model file not found: {model_path}. "
+-                    f"Using bicubic interpolation as fallback."
++
++            hf_model_path = None
++            if self.model_name == "espcn" and self.scale == 2:
++                hf_model_path = download_hf_asset(
++                    settings.HF_FOOTBALL_MODELS_REPO,
++                    settings.HF_ESPCN_MODEL_FILE,
+                 )
+-                return False
++
++            if hf_model_path:
++                self.sr.readModel(hf_model_path)
++                self.sr.setModel(self.model_name, self.scale)
++                self._initialized = True
++                logger.info("SR model loaded from HuggingFace: %s", hf_model_path)
++                return True
++
++            logger.info(
++                f"SR model file not found locally or on HuggingFace for {model_file}. "
++                f"Using bicubic interpolation as fallback."
++            )
++            return False
+ 
+         except Exception as e:
+             logger.info(f"SR initialization: {e}. Using bicubic fallback.")
+@@ -268,6 +285,23 @@ class VideoPreprocessor:
+ 
+         return enhanced
+ 
++    def _apply_super_resolution_preserving_size(self, frame: np.ndarray) -> np.ndarray:
++        """Sharpen with SR while keeping downstream dimensions unchanged."""
++        if not self.cfg.enable_super_resolution:
++            return frame
++        try:
++            original_h, original_w = frame.shape[:2]
++            enhanced = self.sr_enhancer.enhance(frame)
++            if enhanced.shape[:2] != (original_h, original_w):
++                enhanced = cv2.resize(
++                    enhanced,
++                    (original_w, original_h),
++                    interpolation=cv2.INTER_AREA,
++                )
++            return enhanced
++        except Exception:
++            return frame
++
+     def process_frames(
+         self,
+         frames: List[np.ndarray],
+@@ -288,7 +322,8 @@ class VideoPreprocessor:
+             enhanced = []
+             for frame in result:
+                 try:
+-                    enhanced.append(self.enhance_frame(frame))
++                    quality_frame = self.enhance_frame(frame)
++                    enhanced.append(self._apply_super_resolution_preserving_size(quality_frame))
+                 except Exception:
+                     enhanced.append(frame)
+             result = enhanced
+@@ -302,4 +337,5 @@ class VideoPreprocessor:
+         lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+         lab[:, :, 0] = clahe.apply(lab[:, :, 0])
+-        return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+\ No newline at end of file
++        enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
++        return self._apply_super_resolution_preserving_size(enhanced)

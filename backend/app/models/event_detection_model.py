@@ -43,6 +43,15 @@ class EventDetectionModel(nn.Module):
         self.hidden_dim = hidden_dim
         
         # ========== CNN Backbone (ResNet18) ==========
+        if pretrained:
+            import ssl
+            try:
+                _create_unverified_https_context = ssl._create_unverified_context
+            except AttributeError:
+                pass
+            else:
+                ssl._create_default_https_context = _create_unverified_https_context
+                
         resnet = models.resnet18(pretrained=pretrained)
         
         # Remove the final fully connected layer

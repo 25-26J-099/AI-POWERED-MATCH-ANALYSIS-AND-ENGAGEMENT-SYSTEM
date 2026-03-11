@@ -6,6 +6,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.heatmap import compute_heatmap_from_events
+from app.analytics.style_clusters import get_style_cluster_label
 from app.database.database import get_db
 from app.models.models import Event, PlayerEmbedding, PlayerStats
 
@@ -31,6 +32,8 @@ def _serialize_player_stats(stats: PlayerStats) -> dict:
         "vaep": round(stats.vaep, 4),
         "rating": round(stats.rating, 2),
         "match_id": stats.match_id,
+        "style_cluster": None,
+        "style_cluster_label": None,
     }
 
 
@@ -108,6 +111,7 @@ async def get_player_detail(match_id: int, player_id: int, db: AsyncSession = De
         "rating": round(stats.rating, 2),
         "heatmap": heatmap,
         "style_cluster": embedding.style_cluster if embedding else None,
+        "style_cluster_label": get_style_cluster_label(embedding.style_cluster) if embedding else None,
         "umap": {"x": embedding.umap_x, "y": embedding.umap_y} if embedding else None,
     }
 
@@ -155,6 +159,7 @@ async def get_player_style(player_id: int, match_id: int | None = None, db: Asyn
         "player_id": player_id,
         "match_id": stats.match_id,
         "cluster": embedding.style_cluster,
+        "cluster_label": get_style_cluster_label(embedding.style_cluster),
         "embedding_vector": embedding.embedding_vector,
         "umap": {"x": embedding.umap_x, "y": embedding.umap_y},
         "tsne": {"x": embedding.tsne_x, "y": embedding.tsne_y},

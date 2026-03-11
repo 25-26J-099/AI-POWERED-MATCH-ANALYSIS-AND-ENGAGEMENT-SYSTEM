@@ -64,7 +64,7 @@ export default function StyleMap() {
 
         // Tooltips
         dots.append('title')
-            .text((d: any) => `${d.name} (${d.team})\nCluster: ${d.cluster}`);
+            .text((d: any) => `${d.name} (${d.team})\n${d.cluster_label || `Cluster ${d.cluster}`}`);
 
     }, [data, mode]);
 

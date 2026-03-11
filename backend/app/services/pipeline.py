@@ -237,28 +237,46 @@ async def ingest_events(match_id: int, raw_events: list[dict]):
         team_rows = await session.execute(select(Team))
         team_map = {team.name: team.id for team in team_rows.scalars().all()}
 
+        def _resolve_team_name_from_raw(raw_event: dict) -> str | None:
+            raw_team = raw_event.get("team", {})
+            if not isinstance(raw_team, dict):
+                return None
+            team_name = raw_team.get("name")
+            if team_name:
+                return str(team_name)
+            team_id = raw_team.get("id")
+            if team_id is not None:
+                return f"Team {team_id}"
+            return None
+
+        player_team_name_map: dict[str, str] = {}
+        ordered_team_names: list[str] = []
+        for raw in raw_events:
+            resolved_team_name = _resolve_team_name_from_raw(raw)
+            if resolved_team_name and resolved_team_name not in ordered_team_names:
+                ordered_team_names.append(resolved_team_name)
+
+            p_raw = raw.get("player", {})
+            p_name = p_raw.get("name", "") if isinstance(p_raw, dict) else ""
+            p_id = p_raw.get("id") if isinstance(p_raw, dict) else None
+            player_name = p_name or (f"Player {p_id}" if p_id is not None else "")
+            if player_name and resolved_team_name:
+                player_team_name_map[player_name] = resolved_team_name
+
         # Add players and link them to their teams
         for player in new_players:
             existing = await session.execute(select(Player).where(Player.name == player.name))
-            if not existing.scalar_one_or_none():
-                # Try to find which team this player belongs to by checking events
-                for raw in raw_events:
-                    p_raw = raw.get("player", {})
-                    t_raw = raw.get("team", {})
-                    p_name = p_raw.get("name", "") if p_raw else ""
-                    p_id = p_raw.get("id") if p_raw else None
-                    t_name = t_raw.get("name", "") if t_raw else ""
-                    t_id = t_raw.get("id") if t_raw else None
-                    # Match by player name or by generated temporary name
-                    if p_name == player.name or (not p_name and p_id and f"Player {p_id}" in player.name):
-                        # Resolve team name (could be real or generated)
-                        resolved_team_name = t_name
-                        if not resolved_team_name and t_id:
-                            resolved_team_name = f"Team {t_id}"
-                        if resolved_team_name in team_map:
-                            player.team_id = team_map[resolved_team_name]
-                        break
-                session.add(player)
+            existing_player = existing.scalar_one_or_none()
+            resolved_team_name = player_team_name_map.get(player.name)
+            resolved_team_id = team_map.get(resolved_team_name) if resolved_team_name else None
+            if existing_player:
+                if resolved_team_id is not None and existing_player.team_id != resolved_team_id:
+                    existing_player.team_id = resolved_team_id
+                continue
+
+            if resolved_team_id is not None:
+                player.team_id = resolved_team_id
+            session.add(player)
         await session.flush()
 
         # Rebuild maps after flush to get DB-assigned IDs
@@ -275,7 +293,9 @@ async def ingest_events(match_id: int, raw_events: list[dict]):
         match_result = await session.execute(select(Match).where(Match.id == match_id))
         match = match_result.scalar_one_or_none()
         if match:
-            distinct_team_ids = list(dict.fromkeys(team_map.values()))  # preserve insertion order, deduplicate
+            distinct_team_ids = [team_map[name] for name in ordered_team_names if name in team_map]
+            if not distinct_team_ids:
+                distinct_team_ids = list(dict.fromkeys(team_map.values()))
             if not match.home_team_id and len(distinct_team_ids) >= 1:
                 match.home_team_id = distinct_team_ids[0]
             if not match.away_team_id and len(distinct_team_ids) >= 2:
@@ -321,4 +341,3 @@ async def ingest_events(match_id: int, raw_events: list[dict]):
         )
 
         return len(events)
-

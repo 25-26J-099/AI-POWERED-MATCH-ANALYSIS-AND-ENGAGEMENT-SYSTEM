@@ -35,14 +35,32 @@ async def build_match_analytics(match_id: int, db: AsyncSession) -> dict:
     match = await get_match_or_404(match_id, db)
     stats_result = await db.execute(select(PlayerStats).where(PlayerStats.match_id == match_id))
     all_stats = stats_result.scalars().all()
+    events_result = await db.execute(select(Event).where(Event.match_id == match_id))
+    match_events = events_result.scalars().all()
+
+    player_team_fallback: dict[int, int] = {}
+    for event in match_events:
+        if event.player_id is not None and event.team_id is not None and event.player_id not in player_team_fallback:
+            player_team_fallback[event.player_id] = event.team_id
 
     player_stats_data = []
     for stats in all_stats:
+        team_id = stats.player.team_id if stats.player else None
+        if team_id is None:
+            team_id = player_team_fallback.get(stats.player_id)
+
+        team_name = stats.player.team.name if stats.player and stats.player.team else None
+        if team_name is None and team_id == match.home_team_id and match.home_team:
+            team_name = match.home_team.name
+        if team_name is None and team_id == match.away_team_id and match.away_team:
+            team_name = match.away_team.name
+
         player_stats_data.append(
             {
                 "player_id": stats.player_id,
                 "player_name": stats.player.name if stats.player else f"Player {stats.player_id}",
-                "team": stats.player.team.name if stats.player and stats.player.team else None,
+                "team_id": team_id,
+                "team": team_name,
                 "passes": stats.passes,
                 "pass_accuracy": round(stats.pass_accuracy, 2),
                 "progressive_passes": stats.progressive_passes,
@@ -60,8 +78,8 @@ async def build_match_analytics(match_id: int, db: AsyncSession) -> dict:
 
     home_team_name = match.home_team.name if match.home_team else None
     away_team_name = match.away_team.name if match.away_team else None
-    home_stats = [stats for stats in player_stats_data if stats.get("team") == home_team_name]
-    away_stats = [stats for stats in player_stats_data if stats.get("team") == away_team_name]
+    home_stats = [stats for stats in player_stats_data if stats.get("team_id") == match.home_team_id]
+    away_stats = [stats for stats in player_stats_data if stats.get("team_id") == match.away_team_id]
 
     return {
         "match_id": match_id,

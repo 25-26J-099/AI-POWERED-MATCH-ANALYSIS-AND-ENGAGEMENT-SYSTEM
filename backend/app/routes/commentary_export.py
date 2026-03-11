@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.database import get_db
 from app.models.models import Event
-from app.routes.matches import aggregate_team_stats, build_match_analytics
+from app.routes.matches import build_match_analytics
 
 router = APIRouter()
 
@@ -19,15 +19,6 @@ async def get_match_analytics_export(match_id: int, db: AsyncSession = Depends(g
         select(Event).where(Event.match_id == match_id).order_by(Event.period, Event.minute, Event.second)
     )
     events = result.scalars().all()
-
-    team_stats = {
-        "home": aggregate_team_stats(
-            [stats for stats in analytics["player_stats"] if stats.get("team") == analytics.get("home_team")]
-        ),
-        "away": aggregate_team_stats(
-            [stats for stats in analytics["player_stats"] if stats.get("team") == analytics.get("away_team")]
-        ),
-    }
 
     return {
         "match_id": match_id,
@@ -45,5 +36,8 @@ async def get_match_analytics_export(match_id: int, db: AsyncSession = Depends(g
             "away": analytics["away_team_stats"]["total_vaep"],
         },
         "player_stats": analytics["player_stats"],
-        "team_stats": team_stats,
+        "team_stats": {
+            "home": analytics["home_team_stats"],
+            "away": analytics["away_team_stats"],
+        },
     }

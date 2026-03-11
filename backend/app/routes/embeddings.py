@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.style_clusters import get_style_cluster_label
 from app.database.database import get_db
 from app.models.models import PlayerEmbedding, Player
 
@@ -32,6 +33,7 @@ async def get_style_map(match_id: int, db: AsyncSession = Depends(get_db)):
                 "tsne_x": e.tsne_x,
                 "tsne_y": e.tsne_y,
                 "cluster": e.style_cluster,
+                "cluster_label": get_style_cluster_label(e.style_cluster),
             }
             for e in embeddings
         ],

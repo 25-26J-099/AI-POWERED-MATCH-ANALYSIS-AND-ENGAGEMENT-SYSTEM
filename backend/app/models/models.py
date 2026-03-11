@@ -66,7 +66,7 @@ class Player(Base):
 
     team = relationship("Team", back_populates="players", lazy="selectin")
     stats = relationship("PlayerStats", back_populates="player", lazy="selectin")
-    embedding = relationship("PlayerEmbedding", back_populates="player", uselist=False, lazy="selectin")
+    embeddings = relationship("PlayerEmbedding", back_populates="player", lazy="selectin")
 
 
 # ── Events (with embedded freeze frames) ─────────────────────────────────
@@ -170,7 +170,7 @@ class PlayerEmbedding(Base):
 
     __table_args__ = (UniqueConstraint("player_id", "match_id", name="uq_embedding_player_match"),)
 
-    player = relationship("Player", back_populates="embedding", lazy="selectin")
+    player = relationship("Player", back_populates="embeddings", lazy="selectin")
 
 
 # ── Lineups ───────────────────────────────────────────────────────────────

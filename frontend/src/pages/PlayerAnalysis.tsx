@@ -32,7 +32,7 @@ export default function PlayerAnalysis() {
                         background: 'rgba(99,102,241,0.15)', color: 'var(--accent-light)',
                         fontSize: '0.85rem', fontWeight: 600,
                     }}>
-                        Style Cluster {data.style_cluster}
+                        {data.style_cluster_label || `Cluster ${data.style_cluster}`}
                     </div>
                 )}
             </div>

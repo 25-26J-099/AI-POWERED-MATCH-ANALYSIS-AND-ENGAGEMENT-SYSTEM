@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.event_detection.event_detector import GameEvent
+
+
+_PASS_DETAILS_RE = re.compile(r"Pass\s+#(?P<sender>\d+)->(?P<recipient>\d+)\s+\(d=(?P<distance>[\d.]+)px\)")
+_CARRY_DETAILS_RE = re.compile(r"Carry\s+\(dist=(?P<distance>[\d.]+)px\)")
 
 
 class StatsBombExporter:
@@ -32,6 +38,7 @@ class StatsBombExporter:
         self.position_registry: Dict[int, Dict[str, Any]] = {}
         self._possession_counter = 1
         self._last_possession_team: Optional[int] = None
+        self._last_player_locations: Dict[int, List[float]] = {}
 
     def set_frame_dimensions(self, frame_width: int, frame_height: int) -> None:
         self.frame_width = max(1, int(frame_width))
@@ -51,6 +58,7 @@ class StatsBombExporter:
         """
         self._possession_counter = 1
         self._last_possession_team = None
+        self._last_player_locations = {}
 
         sb_events = [
             self.convert_event(event, index=i)
@@ -74,7 +82,17 @@ class StatsBombExporter:
         team_id = self._safe_int(data.get("team_id"), default=-1)
         player_id = self._safe_int(data.get("player_id"), default=None)
         event_type = str(data.get("type") or "unknown")
-        location = self._convert_coordinates(data.get("position"))
+        default_location = self._convert_coordinates(data.get("position"))
+        freeze_frame = self._preserve_freeze_frame(data.get("freeze_frame"))
+        start_location, end_location, recipient_id = self._infer_action_locations(
+            event_type=event_type,
+            player_id=player_id,
+            team_id=team_id,
+            data=data,
+            freeze_frame=freeze_frame,
+            default_location=default_location,
+        )
+        location = start_location or default_location
 
         total_seconds = max(0, int(timestamp))
         hour = total_seconds // 3600
@@ -111,13 +129,17 @@ class StatsBombExporter:
 
         # Event-specific detail containers
         if event_type == "pass":
-            sb_event["pass"] = self._create_pass_details()
+            sb_event["pass"] = self._create_pass_details(
+                start_location=start_location,
+                end_location=end_location,
+                recipient_id=recipient_id,
+            )
         elif event_type == "shot":
             sb_event["shot"] = self._create_shot_details()
         elif event_type == "duel":
             sb_event["duel"] = self._create_duel_details()
         elif event_type == "carry":
-            sb_event["carry"] = {}
+            sb_event["carry"] = self._create_carry_details(end_location=end_location)
         elif event_type == "clearance":
             sb_event["clearance"] = {"body_part": {"id": 40, "name": "Right Foot"}}
         elif event_type == "interception":
@@ -134,9 +156,14 @@ class StatsBombExporter:
         }
 
         # Preserve freeze-frame structure exactly as produced in events.json.
-        freeze_frame = self._preserve_freeze_frame(data.get("freeze_frame"))
         if freeze_frame:
             sb_event["freeze_frame"] = freeze_frame
+
+        self._remember_player_location(
+            player_id=player_id,
+            current_location=self._freeze_frame_player_location(freeze_frame, player_id),
+            fallback_location=end_location or location,
+        )
 
         return sb_event
 
@@ -198,6 +225,124 @@ class StatsBombExporter:
             return None
         return deepcopy(freeze_frame)
 
+    def _infer_action_locations(
+        self,
+        event_type: str,
+        player_id: Optional[int],
+        team_id: int,
+        data: Dict[str, Any],
+        freeze_frame: Optional[Dict[str, Any]],
+        default_location: Optional[List[float]],
+    ) -> Tuple[Optional[List[float]], Optional[List[float]], Optional[int]]:
+        if event_type == "pass":
+            return self._infer_pass_locations(player_id, team_id, data, freeze_frame, default_location)
+        if event_type == "carry":
+            return self._infer_carry_locations(player_id, team_id, data, freeze_frame, default_location)
+        return default_location, None, None
+
+    def _infer_pass_locations(
+        self,
+        player_id: Optional[int],
+        team_id: int,
+        data: Dict[str, Any],
+        freeze_frame: Optional[Dict[str, Any]],
+        default_location: Optional[List[float]],
+    ) -> Tuple[Optional[List[float]], Optional[List[float]], Optional[int]]:
+        details = str(data.get("details") or "")
+        parsed = _PASS_DETAILS_RE.search(details)
+        recipient_id = self._safe_int(parsed.group("recipient"), None) if parsed else None
+        pass_distance_px = float(parsed.group("distance")) if parsed else None
+
+        current_actor_location = self._freeze_frame_player_location(freeze_frame, player_id)
+        recipient_location = self._freeze_frame_player_location(freeze_frame, recipient_id)
+        ball_location = self._freeze_frame_ball_location(freeze_frame)
+        start_location = self._last_player_locations.get(player_id) or current_actor_location
+        end_location = recipient_location or ball_location or default_location
+
+        if start_location is None and end_location is not None and pass_distance_px is not None:
+            start_location = self._relative_start_from_end(end_location, team_id, pass_distance_px)
+        if end_location is None and start_location is not None and pass_distance_px is not None:
+            end_location = self._relative_end_from_start(start_location, team_id, pass_distance_px)
+
+        return start_location or default_location, end_location, recipient_id
+
+    def _infer_carry_locations(
+        self,
+        player_id: Optional[int],
+        team_id: int,
+        data: Dict[str, Any],
+        freeze_frame: Optional[Dict[str, Any]],
+        default_location: Optional[List[float]],
+    ) -> Tuple[Optional[List[float]], Optional[List[float]], Optional[int]]:
+        details = str(data.get("details") or "")
+        parsed = _CARRY_DETAILS_RE.search(details)
+        carry_distance_px = float(parsed.group("distance")) if parsed else None
+
+        end_location = self._freeze_frame_player_location(freeze_frame, player_id) or default_location
+        start_location = self._last_player_locations.get(player_id)
+
+        if start_location is None and end_location is not None and carry_distance_px is not None:
+            start_location = self._relative_start_from_end(end_location, team_id, carry_distance_px)
+
+        return start_location or default_location, end_location, None
+
+    def _relative_start_from_end(
+        self,
+        end_location: List[float],
+        team_id: int,
+        distance_px: float,
+    ) -> List[float]:
+        distance_pitch = (float(distance_px) / float(self.frame_width)) * 120.0
+        if team_id == 1:
+            start_x = min(120.0, end_location[0] + distance_pitch)
+        else:
+            start_x = max(0.0, end_location[0] - distance_pitch)
+        return [round(start_x, 1), round(float(end_location[1]), 1)]
+
+    def _relative_end_from_start(
+        self,
+        start_location: List[float],
+        team_id: int,
+        distance_px: float,
+    ) -> List[float]:
+        distance_pitch = (float(distance_px) / float(self.frame_width)) * 120.0
+        if team_id == 1:
+            end_x = max(0.0, start_location[0] - distance_pitch)
+        else:
+            end_x = min(120.0, start_location[0] + distance_pitch)
+        return [round(end_x, 1), round(float(start_location[1]), 1)]
+
+    def _freeze_frame_player_location(
+        self,
+        freeze_frame: Optional[Dict[str, Any]],
+        player_id: Optional[int],
+    ) -> Optional[List[float]]:
+        if not freeze_frame or player_id is None:
+            return None
+        for player in freeze_frame.get("players", []):
+            if self._safe_int(player.get("player_id"), None) != player_id:
+                continue
+            return self._convert_coordinates(player.get("location"))
+        return None
+
+    def _freeze_frame_ball_location(self, freeze_frame: Optional[Dict[str, Any]]) -> Optional[List[float]]:
+        if not freeze_frame:
+            return None
+        return self._convert_coordinates(freeze_frame.get("ball_location"))
+
+    def _remember_player_location(
+        self,
+        player_id: Optional[int],
+        current_location: Optional[List[float]],
+        fallback_location: Optional[List[float]],
+    ) -> None:
+        if player_id is None:
+            return
+        location = current_location or fallback_location
+        if location is None:
+            return
+        self._last_player_locations[player_id] = [round(float(location[0]), 1), round(float(location[1]), 1)]
+
     def _get_team_info(self, team_id: int) -> Dict[str, Any]:
         if team_id in self.team_registry:
             return {"id": team_id, "name": self.team_registry[team_id]["name"]}
@@ -220,13 +365,34 @@ class StatsBombExporter:
             return self.position_registry[player_id]
         return {"id": 0, "name": "Unknown"}
 
-    def _create_pass_details(self) -> Dict[str, Any]:
-        return {
+    def _create_pass_details(
+        self,
+        start_location: Optional[List[float]],
+        end_location: Optional[List[float]],
+        recipient_id: Optional[int],
+    ) -> Dict[str, Any]:
+        details = {
             "length": 0.0,
             "angle": 0.0,
             "height": {"id": 1, "name": "Ground Pass"},
             "type": {"id": 65, "name": "Open Play"},
         }
+        if start_location and end_location:
+            dx = float(end_location[0]) - float(start_location[0])
+            dy = float(end_location[1]) - float(start_location[1])
+            details["length"] = round(math.sqrt(dx * dx + dy * dy), 2)
+            details["angle"] = round(math.atan2(dy, dx), 4)
+        if end_location:
+            details["end_location"] = end_location
+        if recipient_id is not None:
+            details["recipient"] = self._get_player_info(recipient_id)
+        return details
+
+    def _create_carry_details(self, end_location: Optional[List[float]]) -> Dict[str, Any]:
+        details: Dict[str, Any] = {}
+        if end_location:
+            details["end_location"] = end_location
+        return details
 
     def _create_shot_details(self) -> Dict[str, Any]:
         return {

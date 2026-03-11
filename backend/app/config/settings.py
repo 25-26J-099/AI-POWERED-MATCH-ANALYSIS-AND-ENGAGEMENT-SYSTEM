@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     HF_STYLE_SCALER_REPO: str = Field(default="your-org/style-scaler", description="HuggingFace repo for style scaler")
     HF_STYLE_AUTOENCODER_REPO: str = Field(default="your-org/style-autoencoder", description="HuggingFace repo for style autoencoder")
     HF_STYLE_KMEANS_REPO: str = Field(default="your-org/style-kmeans", description="HuggingFace repo for style KMeans model")
+    HF_FOOTBALL_MODELS_REPO: str = Field(
+        default="AI-POWERED-FOOTBALL-SYSTEM/football-ai-models",
+        description="HuggingFace repo for shared event-detection models",
+    )
+    HF_EVENT_DETECTOR_WEIGHTS_FILE: str = Field(
+        default="event_detector_weights.pth",
+        description="Filename for the ML event detector weights in the shared HuggingFace repo",
+    )
+    HF_ESPCN_MODEL_FILE: str = Field(
+        default="ESPCN_x2.pb",
+        description="Filename for the ESPCN super-resolution model in the shared HuggingFace repo",
+    )
     HF_CACHE_DIR: str = Field(default="./model_cache", description="Local cache directory for HuggingFace models")
 
     # ── GPU / Deployment ──────────────────────────────────────────────────

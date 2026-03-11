@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy import select
 
+from app.config.settings import settings
 from app.database.database import async_session
 from app.models.models import Match
 from app.services.analysis_service import AnalysisRequestOptions
@@ -50,7 +51,10 @@ async def process_match_video(
 ) -> None:
     """Run the merged pipeline for a match from upload through analytics."""
     job_service = get_job_service()
-    resolved_options = options or AnalysisRequestOptions()
+    resolved_options = options or AnalysisRequestOptions(
+        enable_ml_detector=True,
+        ml_model_path=settings.HF_EVENT_DETECTOR_WEIGHTS_FILE,
+    )
     logger.info("Merged pipeline starting for match_id=%s tracking_job_id=%s", match_id, tracking_job_id)
 
     await _update_match(

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.config.pipeline_config import OUTPUT_DIR, PipelineConfig
+from app.config.settings import settings
 from app.event_detection.pipeline import MatchAnalysisPipeline
 
 
@@ -55,7 +56,10 @@ class AnalysisService:
         if not options.enable_ml_detector:
             return None
         if not options.ml_model_path:
-            raise ValueError("ml_model_path is required when enable_ml_detector is true")
+            return None
+        # Allow the shared HuggingFace default filename to resolve later in the pipeline.
+        if options.ml_model_path == settings.HF_EVENT_DETECTOR_WEIGHTS_FILE:
+            return None
         model_path = Path(options.ml_model_path)
         if not model_path.is_absolute():
             model_path = (Path.cwd() / model_path).resolve()

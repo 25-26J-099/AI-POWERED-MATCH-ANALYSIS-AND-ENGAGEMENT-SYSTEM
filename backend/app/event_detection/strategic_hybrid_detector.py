@@ -289,7 +289,7 @@ class StrategicHybridEventDetector:
         end = self.ball_consecutive[-1]
         return ((end[1] - start[1])**2 + (end[2] - start[2])**2)**0.5
     
-    def _detect_shot(self, fw, frame_idx, fps) -> Optional[GameEvent]:
+    def _detect_shot(self, fw, frame_idx, fps, player_tracks) -> Optional[GameEvent]:
         """Detect shot using ball speed and direction."""
         speed = self._ball_speed_consecutive()
         if speed is None:
@@ -304,12 +304,22 @@ class StrategicHybridEventDetector:
         moving_to_goal = (dx_dir < -15 and norm_x < 0.35) or (dx_dir > 15 and norm_x > 0.65)
         
         if moving_to_goal:
+            shooter_id = None
+            shooter_team = self.rule.possession_team if self.rule.possession_team >= 0 else -1
+            for candidate in (self.current_possessor, self.previous_possessor):
+                if candidate is not None and candidate in player_tracks:
+                    shooter_id = candidate
+                    shooter_team = getattr(player_tracks[candidate], "team_id", shooter_team)
+                    break
+
             return GameEvent(
                 event_type="shot",
                 frame_idx=frame_idx,
                 timestamp=frame_idx / fps,
                 confidence=0.65,
                 position=(_f(bx), _f(by)),
+                player_id=shooter_id,
+                team_id=shooter_team,
                 details=f"Shot (speed={speed:.1f}px/f)",
                 source="rule",
             )
@@ -375,7 +385,7 @@ class StrategicHybridEventDetector:
             
             # Shot (rule-based for accuracy)
             if self.router.should_use_rule("shot"):
-                shot = self._detect_shot(fw, frame_idx, fps)
+                shot = self._detect_shot(fw, frame_idx, fps, player_tracks)
                 if shot and self._can_emit(shot.event_type, frame_idx):
                     self._emit(shot)
             

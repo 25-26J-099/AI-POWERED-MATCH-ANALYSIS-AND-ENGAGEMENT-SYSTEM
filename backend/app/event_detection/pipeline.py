@@ -15,12 +15,14 @@ import os
 from typing import Optional, Dict
 
 from app.config.pipeline_config import PipelineConfig
+from app.config.settings import settings
 from app.event_detection.video_preprocessor import VideoPreprocessor
 from app.event_detection.tracker import PlayerBallTracker
 from app.event_detection.team_assigner import TeamAssigner
 from app.event_detection.player_reid import PlayerReIDModule
 from app.event_detection.strategic_hybrid_detector import StrategicHybridEventDetector
 from app.event_detection.statsbomb_export import StatsBombExporter
+from app.services.model_loader import download_hf_asset
 from app.utils.video_utils import VideoReader, VideoWriter
 from app.utils.drawing_utils import Annotator
 from app.utils.data_export import MatchDataExporter
@@ -74,7 +76,7 @@ class MatchAnalysisPipeline:
         self._ml_enabled = False
         
         # Initialize ML detector if configured
-        if ML_AVAILABLE and config.ml_model.enable_ml_detector and config.ml_model.weights_path:
+        if ML_AVAILABLE and config.ml_model.enable_ml_detector:
             self._initialize_ml_detector()
 
     def _initialize_ml_detector(self):
@@ -86,8 +88,17 @@ class MatchAnalysisPipeline:
         try:
             weights_path = self.config.ml_model.weights_path
             if not os.path.exists(weights_path):
-                logger.warning(f"ML model weights not found: {weights_path}")
-                return
+                requested_filename = os.path.basename(weights_path) if weights_path else settings.HF_EVENT_DETECTOR_WEIGHTS_FILE
+                downloaded_path = download_hf_asset(
+                    settings.HF_FOOTBALL_MODELS_REPO,
+                    requested_filename or settings.HF_EVENT_DETECTOR_WEIGHTS_FILE,
+                )
+                if downloaded_path:
+                    weights_path = downloaded_path
+                    logger.info("[Pipeline] ML model weights downloaded from HuggingFace: %s", weights_path)
+                else:
+                    logger.warning(f"ML model weights not found locally or on HuggingFace: {weights_path}")
+                    return
             
             # Integrate ML detector
             success = integrate_ml_detector_into_pipeline(self, weights_path)

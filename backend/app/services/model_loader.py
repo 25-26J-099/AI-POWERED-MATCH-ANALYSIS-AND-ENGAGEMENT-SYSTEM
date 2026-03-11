@@ -67,6 +67,11 @@ def _download_from_hf(repo_id: str, filename: str) -> Optional[str]:
         return None
 
 
+def download_hf_asset(repo_id: str, filename: str) -> Optional[str]:
+    """Download a raw artifact from HuggingFace and return the cached local path."""
+    return _download_from_hf(repo_id, filename)
+
+
 def _load_joblib_or_pickle(path: str | Path) -> Optional[Any]:
     for loader_name, loader in (
         ("joblib", lambda p: joblib.load(p)),

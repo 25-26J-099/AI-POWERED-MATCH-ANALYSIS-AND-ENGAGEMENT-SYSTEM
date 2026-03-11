@@ -47,8 +47,6 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 
-# Keep required model directories tracked
-!backend/PbpModel/
-!backend/PbpModel/**
-!backend/Tacticalmodel/
-!backend/Tacticalmodel/**
+# Model directories (local only; do not push)
+backend/PbpModel/
+backend/Tacticalmodel/

@@ -5,6 +5,17 @@ from typing import List, Tuple, Dict
 from app.models.models import Event, Player, Team
 
 
+def _normalize_external_id(value):
+    """Treat non-positive or empty ids as missing placeholders."""
+    if value in (None, "", 0, "0"):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def parse_events(
     raw_events: List[dict],
     match_id: int,
@@ -48,11 +59,11 @@ def parse_events(
         player_id = None
         if player_raw:
             player_name = player_raw.get("name", "")
-            pid = player_raw.get("id")
+            pid = _normalize_external_id(player_raw.get("id"))
             if player_name and player_name not in existing_players:
                 # Create new player
                 player = Player(name=player_name, position=raw.get("position", {}).get("name") if isinstance(raw.get("position"), dict) else None)
-                if pid:
+                if pid is not None:
                     player.id = pid
                 new_players.append(player)
                 existing_players[player_name] = pid
@@ -63,10 +74,10 @@ def parse_events(
         team_id = None
         if team_raw:
             team_name = team_raw.get("name", "")
-            tid = team_raw.get("id")
+            tid = _normalize_external_id(team_raw.get("id"))
             if team_name and team_name not in existing_teams:
                 team = Team(name=team_name)
-                if tid:
+                if tid is not None:
                     team.id = tid
                 new_teams.append(team)
                 existing_teams[team_name] = tid

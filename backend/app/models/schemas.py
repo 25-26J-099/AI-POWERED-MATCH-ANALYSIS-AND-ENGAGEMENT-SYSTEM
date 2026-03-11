@@ -40,6 +40,7 @@ class AnalyzeUploadRequest(AnalysisOptions):
 
 class JobCreatedResponse(BaseModel):
     job_id: str
+    match_id: Optional[int] = None
     status: JobStatusLiteral
     submitted_at: str
     status_url: str
@@ -74,4 +75,3 @@ class EventListResponse(BaseModel):
     job_id: str
     event_summary: Dict[str, int]
     events: List[Dict[str, Any]]
-

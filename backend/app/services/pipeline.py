@@ -200,8 +200,20 @@ async def ingest_events(match_id: int, raw_events: list[dict]):
                 session.add(player)
         await session.flush()
 
+        team_rows = await session.execute(select(Team))
+        team_map = {team.name: team.id for team in team_rows.scalars().all()}
+
+        player_rows = await session.execute(select(Player))
+        player_map = {player.name: player.id for player in player_rows.scalars().all()}
+
         # Add events
         for event in events:
+            raw_team = (event.raw_data or {}).get("team", {})
+            raw_player = (event.raw_data or {}).get("player", {})
+            team_name = raw_team.get("name") if isinstance(raw_team, dict) else None
+            player_name = raw_player.get("name") if isinstance(raw_player, dict) else None
+            event.team_id = team_map.get(team_name)
+            event.player_id = player_map.get(player_name)
             session.add(event)
         await session.commit()
 

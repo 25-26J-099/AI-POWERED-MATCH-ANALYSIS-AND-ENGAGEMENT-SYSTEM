@@ -1,11 +1,15 @@
 """Video analysis API endpoints."""
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database.database import get_db
+from app.models.models import Match
 from app.models.schemas import (
     AnalyzePathRequest, AnalysisResultResponse, EventListResponse, JobCreatedResponse, JobStatusResponse,
 )
@@ -13,6 +17,7 @@ from app.services.analysis_service import AnalysisRequestOptions
 from app.services.artifact_service import ArtifactService
 from app.services.dependencies import get_artifact_service, get_job_service
 from app.services.job_service import JobService
+from app.services.merged_pipeline_service import monitor_tracking_job
 
 router = APIRouter()
 
@@ -38,9 +43,15 @@ def _to_options(payload: AnalyzePathRequest) -> AnalysisRequestOptions:
     )
 
 
-def _to_job_created_response(request: Request, job_id: str, submitted_at: str) -> JobCreatedResponse:
+def _to_job_created_response(
+    request: Request,
+    job_id: str,
+    submitted_at: str,
+    match_id: int | None = None,
+) -> JobCreatedResponse:
     return JobCreatedResponse(
         job_id=job_id,
+        match_id=match_id,
         status="queued",
         submitted_at=submitted_at,
         status_url=str(request.url_for("get_job_status", job_id=job_id)),
@@ -53,9 +64,10 @@ def _to_job_created_response(request: Request, job_id: str, submitted_at: str) -
     response_model=JobCreatedResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-def analyze_video_by_path(
+async def analyze_video_by_path(
     payload: AnalyzePathRequest,
     request: Request,
+    db: AsyncSession = Depends(get_db),
     job_service: JobService = Depends(get_job_service),
 ) -> JobCreatedResponse:
     options = _to_options(payload)
@@ -73,7 +85,20 @@ def analyze_video_by_path(
     except ValueError as exc:
         job_service.delete_job(record.job_id)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _to_job_created_response(request, record.job_id, record.submitted_at)
+
+    match = Match(
+        video_path=payload.input_path,
+        tracking_job_id=record.job_id,
+        status="tracking",
+        status_detail="Tracking job started from the Component 1 API.",
+    )
+    db.add(match)
+    await db.commit()
+    await db.refresh(match)
+
+    asyncio.create_task(monitor_tracking_job(match.id, record.job_id))
+
+    return _to_job_created_response(request, record.job_id, record.submitted_at, match.id)
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse, name="get_job_status")

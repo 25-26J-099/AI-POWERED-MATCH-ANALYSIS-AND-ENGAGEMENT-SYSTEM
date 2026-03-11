@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,8 @@ from app.models.models import Match
 from app.services.analysis_service import AnalysisRequestOptions
 from app.services.dependencies import get_job_service
 from app.services.pipeline import ingest_events, run_full_pipeline
+
+logger = logging.getLogger(__name__)
 
 
 async def _update_match(match_id: int, **updates: Any) -> None:
@@ -48,6 +51,7 @@ async def process_match_video(
     """Run the merged pipeline for a match from upload through analytics."""
     job_service = get_job_service()
     resolved_options = options or AnalysisRequestOptions()
+    logger.info("Merged pipeline starting for match_id=%s tracking_job_id=%s", match_id, tracking_job_id)
 
     await _update_match(
         match_id,
@@ -63,14 +67,40 @@ async def process_match_video(
             output_name=f"match_{match_id}_tracking",
         )
     except Exception as exc:  # noqa: BLE001
+        logger.exception("Tracking failed to start for match_id=%s tracking_job_id=%s", match_id, tracking_job_id)
         await _update_match(match_id, status="failed", status_detail=f"Tracking failed to start: {exc}")
         return
+    await monitor_tracking_job(match_id, tracking_job_id)
+
+
+async def monitor_tracking_job(match_id: int, tracking_job_id: str) -> None:
+    """Wait for an already-started tracking job and hand its outputs to analytics."""
+    job_service = get_job_service()
+    logger.info("Monitoring tracking job for match_id=%s tracking_job_id=%s", match_id, tracking_job_id)
+
+    await _update_match(
+        match_id,
+        status="tracking",
+        status_detail="Tracking job started. Waiting for StatsBomb event output...",
+    )
 
     while True:
         record = job_service.get_job(tracking_job_id)
+        logger.info(
+            "Tracking job poll match_id=%s tracking_job_id=%s status=%s",
+            match_id,
+            tracking_job_id,
+            record.status,
+        )
         if record.status == "completed":
             break
         if record.status == "failed":
+            logger.error(
+                "Tracking job failed for match_id=%s tracking_job_id=%s error=%s",
+                match_id,
+                tracking_job_id,
+                record.error,
+            )
             await _update_match(
                 match_id,
                 status="failed",
@@ -82,8 +112,15 @@ async def process_match_video(
     record = job_service.get_job(tracking_job_id)
     artifact_paths = dict(record.artifact_paths)
     statsbomb_path = artifact_paths.get("statsbomb_json") or artifact_paths.get("json")
+    logger.info(
+        "Tracking job completed for match_id=%s tracking_job_id=%s statsbomb_path=%s",
+        match_id,
+        tracking_job_id,
+        statsbomb_path,
+    )
 
     if not statsbomb_path:
+        logger.error("No StatsBomb artifact found for match_id=%s tracking_job_id=%s", match_id, tracking_job_id)
         await _update_match(
             match_id,
             status="failed",
@@ -94,13 +131,22 @@ async def process_match_video(
 
     try:
         raw_events = _load_statsbomb_events(statsbomb_path)
+        logger.info(
+            "Loaded %s StatsBomb events for match_id=%s tracking_job_id=%s",
+            len(raw_events),
+            match_id,
+            tracking_job_id,
+        )
         await _update_match(
             match_id,
             status="analytics_processing",
-            status_detail="Storing tracking events and launching analytics...",
+            status_detail="StatsBomb events received. Launching Component 4 analytics...",
             tracking_artifacts=artifact_paths,
         )
         await ingest_events(match_id, raw_events)
+        logger.info("Event ingestion complete for match_id=%s", match_id)
         await run_full_pipeline(match_id)
+        logger.info("Component 4 analytics pipeline complete for match_id=%s", match_id)
     except Exception as exc:  # noqa: BLE001
+        logger.exception("Merged pipeline failed after tracking for match_id=%s", match_id)
         await _update_match(match_id, status="failed", status_detail=f"Merged pipeline failed: {exc}")

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.database import get_db
 from app.models.models import Event, Match, PlayerStats
+from app.services.dependencies import get_job_service
 
 router = APIRouter()
 
@@ -110,11 +111,22 @@ async def get_match(match_id: int, db: AsyncSession = Depends(get_db)):
 @router.get("/match/{match_id}/status")
 async def get_match_status(match_id: int, db: AsyncSession = Depends(get_db)):
     match = await get_match_or_404(match_id, db)
+    tracking_job_status = None
+    tracking_job_error = None
+    if match.tracking_job_id:
+        try:
+            job = get_job_service().get_job(match.tracking_job_id)
+            tracking_job_status = job.status
+            tracking_job_error = job.error
+        except KeyError:
+            tracking_job_status = "missing"
     return {
         "match_id": match.id,
         "job_id": match.tracking_job_id,
         "status": match.status,
         "status_detail": match.status_detail,
+        "tracking_job_status": tracking_job_status,
+        "tracking_job_error": tracking_job_error,
     }
 
 

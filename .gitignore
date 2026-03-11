@@ -33,7 +33,15 @@ data/
 *.pth
 *.pkl
 *.onnx
+*.gguf
+*.whl
+*.mp4
 weights/
+model_cache/
+backend/model_cache/
+backend/app/config/output/
+backend/uploads/
+backend/commentary_videos/
 
 # Logs
 *.log

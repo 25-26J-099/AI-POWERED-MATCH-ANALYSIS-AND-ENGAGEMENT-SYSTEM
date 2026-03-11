@@ -8,6 +8,9 @@ const api = axios.create({
     headers: { 'Content-Type': 'application/json' },
 });
 
+export const buildApiUrl = (path: string) =>
+    `${API_BASE.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+
 // ── Upload ────────────────────────────────────────────────────────────────
 export const uploadVideo = (file: File, onProgress?: (pct: number) => void) =>
     api.post('/upload-video', (() => { const f = new FormData(); f.append('video', file); return f; })(), {
@@ -27,6 +30,8 @@ export const getMatch = (id: number) => api.get(`/match/${id}`);
 export const getMatchStatus = (id: number) => api.get(`/match/${id}/status`);
 export const getMatchEvents = (id: number) => api.get(`/match/${id}/events`);
 export const getMatchAnalytics = (id: number) => api.get(`/match/${id}/analytics`);
+export const getMatchCommentary = (id: number) => api.get(`/match/${id}/commentary`);
+export const getCommentaryVideo = (id: number) => api.get(`/match/${id}/commentary/video`);
 
 // ── Players ───────────────────────────────────────────────────────────────
 export const getMatchPlayers = (id: number) => api.get(`/match/${id}/players`);

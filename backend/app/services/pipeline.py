@@ -2,7 +2,7 @@
 
 import traceback
 from collections import defaultdict
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.database import async_session
@@ -11,6 +11,7 @@ from app.services.event_parser import parse_events
 from app.analytics.player_stats import compute_player_stats
 from app.analytics.ratings import compute_rating
 from app.analytics.embeddings import compute_embeddings
+from app.services.commentary_service import generate_commentary
 
 
 async def _update_status(session: AsyncSession, match_id: int, status: str, detail: str):
@@ -21,6 +22,30 @@ async def _update_status(session: AsyncSession, match_id: int, status: str, deta
         match.status = status
         match.status_detail = detail
         await session.commit()
+
+
+async def _align_postgres_pk_sequence(session: AsyncSession, model) -> None:
+    """Keep Postgres identity/serial sequences aligned with current max PK."""
+    bind = session.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+
+    max_id = await session.scalar(select(func.max(model.id)))
+    await session.execute(
+        text(
+            "SELECT setval("
+            "pg_get_serial_sequence(:table_name, :column_name), "
+            ":sequence_value, "
+            ":is_called"
+            ")"
+        ),
+        {
+            "table_name": model.__tablename__,
+            "column_name": "id",
+            "sequence_value": int(max_id or 1),
+            "is_called": max_id is not None,
+        },
+    )
 
 
 async def run_full_pipeline(match_id: int):
@@ -193,15 +218,11 @@ async def run_full_pipeline(match_id: int):
             logger.info("📊 match_id=%s: Commentary stage reached", match_id)
 
             # Commentary is handled by external components merged via GitHub.
-            # Placeholder: once commentary video is ready, update the path.
-            # In production, this would call the commentary API and wait for completion.
+            # Triggers the new async commentary pipeline.
+            await generate_commentary(match_id)
 
-            # ── Step 5: Done ─────────────────────────────────────────────
-            await _update_status(
-                session, match_id, "completed",
-                f"Analysis complete. Processed {len(events)} events for {len(player_events_map)} players."
-            )
-            logger.info("✅ match_id=%s: Pipeline complete — %s events, %s players", match_id, len(events), len(player_events_map))
+            # Note: `generate_commentary` updates the final status to 'completed'.
+            logger.info("✅ match_id=%s: Pipeline triggered commentary", match_id)
 
         except Exception as e:
             traceback.print_exc()
@@ -240,6 +261,7 @@ async def ingest_events(match_id: int, raw_events: list[dict]):
         logger.info("📥 ingest_events: parsed → %s events, %s new players, %s new teams", len(events), len(new_players), len(new_teams))
 
         # Add teams first (for FK refs)
+        await _align_postgres_pk_sequence(session, Team)
         for team in new_teams:
             existing = await session.execute(select(Team).where(Team.name == team.name))
             if not existing.scalar_one_or_none():
@@ -277,6 +299,7 @@ async def ingest_events(match_id: int, raw_events: list[dict]):
                 player_team_name_map[player_name] = resolved_team_name
 
         # Add players and link them to their teams
+        await _align_postgres_pk_sequence(session, Player)
         for player in new_players:
             existing = await session.execute(select(Player).where(Player.name == player.name))
             existing_player = existing.scalar_one_or_none()

@@ -65,11 +65,9 @@ def parse_events(
             if not team_name and tid is not None:
                 team_name = f"Team {tid}"
             if team_name and team_name not in existing_teams:
-                team = Team(name=team_name)
-                if tid is not None:
-                    team.id = tid
-                new_teams.append(team)
-                existing_teams[team_name] = tid
+                # External feed IDs are only used for naming fallback, not DB PKs.
+                new_teams.append(Team(name=team_name))
+                existing_teams[team_name] = None
             team_id = existing_teams.get(team_name)
 
         # Player
@@ -90,10 +88,8 @@ def parse_events(
                     name=player_name,
                     position=raw.get("position", {}).get("name") if isinstance(raw.get("position"), dict) else None,
                 )
-                if pid is not None:
-                    player.id = pid
                 new_players.append(player)
-                existing_players[player_name] = pid
+                existing_players[player_name] = None
             player_id = existing_players.get(player_name)
 
         # Location

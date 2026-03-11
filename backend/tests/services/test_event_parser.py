@@ -109,3 +109,24 @@ def test_multiple_events_same_player_deduplication():
     assert len(events) == 2
     assert len(players) == 1
     assert len(teams) == 1
+
+
+def test_external_ids_do_not_override_database_primary_keys():
+    """Raw provider IDs should not be written into ORM primary key fields."""
+    raw = [
+        {
+            "id": "evt-pk",
+            "type": "Pass",
+            "player": {"id": 27, "name": "Player 27"},
+            "team": {"id": 1, "name": "Team B"},
+            "location": [25, 25],
+        }
+    ]
+    events, players, teams = parse_events(raw, match_id=1)
+    assert len(events) == 1
+    assert len(players) == 1
+    assert len(teams) == 1
+    assert players[0].id is None
+    assert teams[0].id is None
+    assert events[0].player_id is None
+    assert events[0].team_id is None

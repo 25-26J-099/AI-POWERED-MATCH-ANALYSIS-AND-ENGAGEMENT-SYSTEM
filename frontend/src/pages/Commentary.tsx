@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { getMatch } from '../api/client';
+import { buildApiUrl, getMatch } from '../api/client';
 
 export default function Commentary() {
     const { id } = useParams();
@@ -11,6 +11,8 @@ export default function Commentary() {
     }, [id]);
 
     if (!match) return <div className="page-container"><div className="spinner" style={{ margin: '80px auto' }} /></div>;
+
+    const commentaryVideoUrl = buildApiUrl(`/match/${match.id}/commentary/video`);
 
     return (
         <div className="page-container" style={{ maxWidth: '1000px', margin: '0 auto' }}>
@@ -25,7 +27,7 @@ export default function Commentary() {
                             style={{ width: '100%', borderRadius: '16px 16px 0 0', background: '#000' }}
                             poster=""
                         >
-                            <source src={`/api/static/${match.commentary_video_path}`} type="video/mp4" />
+                            <source src={commentaryVideoUrl} type="video/mp4" />
                             Your browser does not support the video tag.
                         </video>
                         <div style={{ padding: '24px' }}>

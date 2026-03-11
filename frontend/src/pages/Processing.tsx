@@ -7,14 +7,19 @@ const PIPELINE_STAGES = [
     { key: 'uploading', label: 'Uploading Video', icon: '📤' },
     { key: 'tracking', label: 'Tracking Players and Events', icon: '🎯' },
     { key: 'analytics_processing', label: 'Computing Analytics', icon: '📊' },
-    { key: 'commentary_generation', label: 'Preparing Commentary Export', icon: '🎙️' },
+    { key: 'play_by_play_commentary', label: 'Generating Play-by-Play Commentary', icon: '🎙️' },
+    { key: 'expert_commentary', label: 'Processing Tactical Insights', icon: '🧠' },
+    { key: 'video_rendering', label: 'Rendering Commentary Video', icon: '🎬' },
     { key: 'completed', label: 'Analysis Complete', icon: '✅' },
 ];
+
+const PIPELINE_STAGE_KEYS = new Set(PIPELINE_STAGES.map((stage) => stage.key));
 
 export default function Processing() {
     const { id } = useParams();
     const navigate = useNavigate();
     const [status, setStatus] = useState('uploading');
+    const [lastActiveStage, setLastActiveStage] = useState('uploading');
     const [detail, setDetail] = useState('');
     const [error, setError] = useState(false);
 
@@ -24,6 +29,9 @@ export default function Processing() {
                 const res = await getMatchStatus(Number(id));
                 setStatus(res.data.status);
                 setDetail(res.data.status_detail || '');
+                if (PIPELINE_STAGE_KEYS.has(res.data.status) && res.data.status !== 'completed') {
+                    setLastActiveStage(res.data.status);
+                }
                 if (res.data.status === 'completed') {
                     clearInterval(poll);
                     setTimeout(() => navigate(`/match/${id}`), 1500);
@@ -39,7 +47,8 @@ export default function Processing() {
         return () => clearInterval(poll);
     }, [id, navigate]);
 
-    const currentIndex = PIPELINE_STAGES.findIndex((stage) => stage.key === status);
+    const displayedStatus = status === 'failed' ? lastActiveStage : status;
+    const currentIndex = PIPELINE_STAGES.findIndex((stage) => stage.key === displayedStatus);
 
     return (
         <div className="page-container" style={{ maxWidth: '700px', margin: '0 auto', paddingTop: '48px' }}>
@@ -47,6 +56,22 @@ export default function Processing() {
             <p className="page-subtitle" style={{ textAlign: 'center' }}>
                 Component 1 tracking and Component 4 analytics are running in sequence.
             </p>
+
+            {error && (
+                <div
+                    className="card"
+                    style={{
+                        marginTop: '24px',
+                        borderColor: 'var(--danger, #c53030)',
+                        background: 'rgba(197, 48, 48, 0.08)',
+                    }}
+                >
+                    <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>Pipeline failed</div>
+                    <div style={{ marginTop: '8px', color: 'var(--text-secondary)' }}>
+                        {detail || 'The backend reported a failure while processing this match.'}
+                    </div>
+                </div>
+            )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '40px' }}>
                 {PIPELINE_STAGES.map((stage, index) => {
@@ -73,7 +98,7 @@ export default function Processing() {
                                 >
                                     {stage.label}
                                 </div>
-                                {state === 'active' && detail && (
+                                {(state === 'active' || state === 'failed') && detail && index === currentIndex && (
                                     <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
                                         {detail}
                                     </div>

@@ -17,6 +17,7 @@ from app.database.database import init_db
 from app.routes import (
     analysis,
     analytics,
+    commentary, # Added commentary router
     commentary_export,
     embeddings,
     lineups,
@@ -67,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(embeddings.router, tags=["Embeddings"])
     app.include_router(analysis.router, tags=["AI Analysis"])
     app.include_router(video.router, prefix="/api/v1/video", tags=["Tracking"])
+    app.include_router(commentary.router, tags=["Commentary"]) # Registered commentary router
 
     static_dirs = {
         "/static/uploads": Path(settings.UPLOAD_DIR),

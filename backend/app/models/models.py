@@ -38,6 +38,7 @@ class Match(Base):
     events = relationship("Event", back_populates="match", lazy="selectin")
     lineups = relationship("Lineup", back_populates="match", lazy="selectin")
     player_stats = relationship("PlayerStats", back_populates="match", lazy="selectin")
+    commentary_outputs = relationship("CommentaryOutput", back_populates="match", lazy="selectin", cascade="all, delete-orphan")
 
 
 # ── Teams ─────────────────────────────────────────────────────────────────
@@ -199,3 +200,18 @@ class LineupPlayer(Base):
     position_slot: Mapped[int] = mapped_column(Integer, nullable=False, doc="Index in formation layout (0-10)")
 
     lineup = relationship("Lineup", back_populates="players")
+
+# ── Commentary Outputs ────────────────────────────────────────────────────
+
+
+class CommentaryOutput(Base):
+    __tablename__ = "commentary_outputs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    match_id: Mapped[int] = mapped_column(Integer, ForeignKey("matches.id"), nullable=False, index=True)
+    commentary_type: Mapped[str] = mapped_column(String(50), nullable=False, doc="'play_by_play' or 'expert'")
+    commentary_text: Mapped[str] = mapped_column(Text, nullable=False)
+    video_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    match = relationship("Match", back_populates="commentary_outputs")

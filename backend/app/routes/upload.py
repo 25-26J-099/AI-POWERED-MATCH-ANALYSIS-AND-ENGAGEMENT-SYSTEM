@@ -5,7 +5,7 @@ import asyncio
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,13 +17,22 @@ from app.services.merged_pipeline_service import process_match_video
 
 router = APIRouter()
 
+ALLOWED_COMMENTARY_LEVELS = ("Beginner", "Intermediate", "Expert")
+
 
 @router.post("/upload-video")
 async def upload_video(
     video: UploadFile = File(...),
+    commentary_level: str = Form("Intermediate"),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a video and create a match record (pipeline starts after lineup setup)."""
+    if commentary_level not in ALLOWED_COMMENTARY_LEVELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid commentary_level. Expected one of: {', '.join(ALLOWED_COMMENTARY_LEVELS)}",
+        )
+
     filename = video.filename or "uploaded_video.mp4"
     ext = Path(filename).suffix or ".mp4"
     stored_name = f"{uuid.uuid4().hex}{ext}"
@@ -44,6 +53,7 @@ async def upload_video(
     match = Match(
         video_path=str(video_path),
         tracking_job_id=job.job_id,
+        tracking_artifacts={"commentary_level": commentary_level},
         status="lineup_pending",
         status_detail="Video uploaded. Waiting for lineup setup...",
     )
@@ -55,6 +65,7 @@ async def upload_video(
         "match_id": match.id,
         "job_id": job.job_id,
         "status": match.status,
+        "commentary_level": commentary_level,
         "message": "Video uploaded. Proceed to lineup setup.",
     }
 

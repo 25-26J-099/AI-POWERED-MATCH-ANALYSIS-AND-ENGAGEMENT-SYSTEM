@@ -2,9 +2,12 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { uploadVideo } from '../api/client';
 
+const COMMENTARY_LEVELS = ['Beginner', 'Intermediate', 'Expert'] as const;
+
 export default function Upload() {
     const navigate = useNavigate();
     const [file, setFile] = useState<File | null>(null);
+    const [commentaryLevel, setCommentaryLevel] = useState<(typeof COMMENTARY_LEVELS)[number]>('Intermediate');
     const [progress, setProgress] = useState(0);
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState('');
@@ -29,7 +32,7 @@ export default function Upload() {
         setUploading(true);
         setError('');
         try {
-            const response = await uploadVideo(file, setProgress);
+            const response = await uploadVideo(file, commentaryLevel, setProgress);
             navigate(`/lineup/${response.data.match_id}`);
         } catch (err: any) {
             setError(err.response?.data?.detail || 'Upload failed');
@@ -85,7 +88,7 @@ export default function Upload() {
                     {file ? file.name : 'Drop your match video here'}
                 </h3>
                 <p style={{ color: 'var(--text-secondary)' }}>
-                    {file ? `${(file.size / 1024 / 1024).toFixed(1)} MB ready to process` : 'or click to browse • MP4, AVI, MOV'}
+                    {file ? `${(file.size / 1024 / 1024).toFixed(1)} MB ready to process` : 'or click to browse - MP4, AVI, MOV'}
                 </p>
                 <input
                     id="video-input"
@@ -94,6 +97,43 @@ export default function Upload() {
                     style={{ display: 'none' }}
                     onChange={(e) => handleFile(e.target.files?.[0])}
                 />
+            </div>
+
+            <div className="glass-card" style={{ marginTop: '24px' }}>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '10px' }}>Expert Commentary Level</h3>
+                <p style={{ color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: 1.6 }}>
+                    This changes only the tactical expert commentary. Play-by-play commentary stays unchanged.
+                </p>
+                <div style={{ display: 'grid', gap: '12px', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                    {COMMENTARY_LEVELS.map((level) => {
+                        const selected = commentaryLevel === level;
+                        return (
+                            <button
+                                key={level}
+                                type="button"
+                                onClick={() => setCommentaryLevel(level)}
+                                disabled={uploading}
+                                style={{
+                                    borderRadius: '14px',
+                                    border: selected ? '1px solid var(--accent)' : '1px solid var(--border-subtle)',
+                                    background: selected ? 'rgba(99,102,241,0.12)' : 'var(--bg-glass)',
+                                    padding: '16px',
+                                    textAlign: 'left',
+                                    cursor: uploading ? 'not-allowed' : 'pointer',
+                                    opacity: uploading ? 0.6 : 1,
+                                    transition: 'all 0.2s ease',
+                                }}
+                            >
+                                <div style={{ fontWeight: 700, marginBottom: '6px', color: 'var(--text-primary)' }}>{level}</div>
+                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', lineHeight: 1.5 }}>
+                                    {level === 'Beginner' && 'Simple tactical explanations with clear, accessible language.'}
+                                    {level === 'Intermediate' && 'Balanced tactical detail with readable match analysis.'}
+                                    {level === 'Expert' && 'Dense tactical language aimed at advanced football analysis.'}
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
             </div>
 
             {file && (
@@ -129,7 +169,7 @@ export default function Upload() {
                         disabled={uploading}
                         style={{ width: '100%', padding: '16px' }}
                     >
-                        {uploading ? 'Uploading...' : 'Upload and Start Analysis →'}
+                        {uploading ? 'Uploading...' : `Upload and Start Analysis (${commentaryLevel}) ->`}
                     </button>
                 </div>
             )}

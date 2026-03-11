@@ -12,8 +12,17 @@ export const buildApiUrl = (path: string) =>
     `${API_BASE.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
 
 // ── Upload ────────────────────────────────────────────────────────────────
-export const uploadVideo = (file: File, onProgress?: (pct: number) => void) =>
-    api.post('/upload-video', (() => { const f = new FormData(); f.append('video', file); return f; })(), {
+export const uploadVideo = (
+    file: File,
+    commentaryLevel: 'Beginner' | 'Intermediate' | 'Expert',
+    onProgress?: (pct: number) => void,
+) =>
+    api.post('/upload-video', (() => {
+        const f = new FormData();
+        f.append('video', file);
+        f.append('commentary_level', commentaryLevel);
+        return f;
+    })(), {
         headers: { 'Content-Type': 'multipart/form-data' },
         onUploadProgress: (e) => onProgress?.(Math.round((e.loaded * 100) / (e.total || 1))),
     });

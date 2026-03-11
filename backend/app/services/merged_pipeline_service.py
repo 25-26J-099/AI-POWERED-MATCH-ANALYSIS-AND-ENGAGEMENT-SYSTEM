@@ -26,6 +26,11 @@ async def _update_match(match_id: int, **updates: Any) -> None:
         if match is None:
             return
         for key, value in updates.items():
+            if key == "tracking_artifacts" and isinstance(value, dict):
+                merged_artifacts = dict(match.tracking_artifacts or {})
+                merged_artifacts.update(value)
+                setattr(match, key, merged_artifacts)
+                continue
             setattr(match, key, value)
         await session.commit()
 

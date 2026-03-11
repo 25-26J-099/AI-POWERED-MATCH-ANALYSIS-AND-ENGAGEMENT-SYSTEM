@@ -13,6 +13,7 @@ import app.commentary.pbp_commentary as pbp
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
+ALLOWED_COMMENTARY_LEVELS = {"Beginner", "Intermediate", "Expert"}
 
 
 def _player_stat_vaep_total(stat: PlayerStats) -> float:
@@ -29,6 +30,19 @@ def _player_stat_xg_total(stat: PlayerStats) -> float:
 
 def _player_stat_xt_total(stat: PlayerStats) -> float:
     return float(getattr(stat, "xt_total", getattr(stat, "xt", 0.0)) or 0.0)
+
+
+def _resolve_tactical_commentary_level(match: Match) -> str:
+    stored_level = None
+    if isinstance(match.tracking_artifacts, dict):
+        stored_level = match.tracking_artifacts.get("commentary_level")
+    if stored_level in ALLOWED_COMMENTARY_LEVELS:
+        return str(stored_level)
+
+    settings_level = getattr(settings, "COMMENTARY_LEVEL", "Intermediate")
+    if settings_level in ALLOWED_COMMENTARY_LEVELS:
+        return str(settings_level)
+    return "Intermediate"
 
 
 async def generate_commentary(match_id: int):
@@ -96,6 +110,9 @@ async def generate_commentary(match_id: int):
         match.status = "expert_commentary"
         match.status_detail = "Processing tactical insights and play-by-play"
         await session.commit()
+
+        tactical_level = _resolve_tactical_commentary_level(match)
+        logger.info("Commentary pipeline using tactical level=%s for match_id=%s", tactical_level, match_id)
         
         # Determine source video (fallback to demo if testing, else use uploaded video)
         video_path = "D:\\ResearchPoject\\AI-POWERED-MATCH-ANALYSIS-AND-ENGAGEMENT-SYSTEM\\backend\\app\\commentary\\Demovid.mp4"
@@ -131,7 +148,7 @@ async def generate_commentary(match_id: int):
                 events=event_json,
                 threesixty_lookup=threesixty_lookup,
                 video_file=video_path,
-                level=getattr(settings, "COMMENTARY_LEVEL", "Intermediate"),
+                level=tactical_level,
                 analytics_context=analytics_context,
                 progress_callback=progress_cb,
                 done_callback=done_cb

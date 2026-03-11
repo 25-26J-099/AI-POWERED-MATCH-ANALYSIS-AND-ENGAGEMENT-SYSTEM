@@ -111,6 +111,7 @@ async def list_matches(db: AsyncSession = Depends(get_db)):
 @router.get("/match/{match_id}")
 async def get_match(match_id: int, db: AsyncSession = Depends(get_db)):
     match = await get_match_or_404(match_id, db)
+    tracking_artifacts = match.tracking_artifacts or {}
     return {
         "id": match.id,
         "home_team": match.home_team.name if match.home_team else None,
@@ -119,7 +120,8 @@ async def get_match(match_id: int, db: AsyncSession = Depends(get_db)):
         "video_path": match.video_path,
         "commentary_video_path": match.commentary_video_path,
         "tracking_job_id": match.tracking_job_id,
-        "tracking_artifacts": match.tracking_artifacts or {},
+        "tracking_artifacts": tracking_artifacts,
+        "commentary_level": tracking_artifacts.get("commentary_level"),
         "status": match.status,
         "status_detail": match.status_detail,
         "created_at": match.created_at.isoformat(),

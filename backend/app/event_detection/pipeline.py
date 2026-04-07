@@ -19,6 +19,7 @@ from app.config.settings import settings
 from app.event_detection.video_preprocessor import VideoPreprocessor
 from app.event_detection.tracker import PlayerBallTracker
 from app.event_detection.team_assigner import TeamAssigner
+from app.event_detection.jersey_ocr import JerseyOCR
 from app.event_detection.player_reid import PlayerReIDModule
 from app.event_detection.strategic_hybrid_detector import StrategicHybridEventDetector
 from app.event_detection.statsbomb_export import StatsBombExporter
@@ -53,6 +54,7 @@ class MatchAnalysisPipeline:
         self.preprocessor = VideoPreprocessor(config)
         self.tracker = PlayerBallTracker(config)
         self.team_assigner = TeamAssigner(config)
+        self.jersey_ocr = JerseyOCR(config)
         self.reid_module = PlayerReIDModule(config)
         self.robust_reid = RobustReIDSystem(config)
         self.event_detector = StrategicHybridEventDetector(config)
@@ -119,6 +121,15 @@ class MatchAnalysisPipeline:
         logger.info("=" * 60)
         self.tracker.initialize()
         logger.info("[OK] Tracker initialized")
+        reid_status = self.robust_reid.get_backend_status()
+        logger.info(
+            "[OK] Re-ID backend=%s config=%s weights=%s strict=%s reason=%s",
+            reid_status["backend"],
+            reid_status["resolved_config_path"],
+            reid_status["resolved_weights_path"],
+            reid_status["strict_fastreid"],
+            reid_status["fallback_reason"],
+        )
         
         if self._ml_enabled:
             logger.info("[OK] ML event detector active")
@@ -184,6 +195,7 @@ class MatchAnalysisPipeline:
         )
         self.fps = reader.fps
         writer = VideoWriter(output_path, reader.width, reader.height, fps=reader.fps)
+        reid_status = self.robust_reid.get_backend_status()
 
         self.exporter.set_metadata({
             "input_video": input_path,
@@ -192,6 +204,11 @@ class MatchAnalysisPipeline:
             "total_frames": reader.total_frames,
             "duration_seconds": reader.duration,
             "ml_detector_enabled": self._ml_enabled,
+            "reid_backend": reid_status["backend"],
+            "reid_model_path": reid_status["resolved_weights_path"],
+            "reid_config_path": reid_status["resolved_config_path"],
+            "reid_fallback_reason": reid_status["fallback_reason"],
+            "reid_strict_mode": reid_status["strict_fastreid"],
         })
         self.statsbomb_exporter.set_frame_dimensions(reader.width, reader.height)
 
@@ -202,6 +219,12 @@ class MatchAnalysisPipeline:
         logger.info(f"Output: {output_path}")
         logger.info(f"Frames: {reader.total_frames} | FPS: {reader.fps:.1f}")
         logger.info(f"ML Detector: {'Enabled' if self._ml_enabled else 'Disabled'}")
+        logger.info(
+            "Re-ID: %s | Config: %s | Weights: %s",
+            reid_status["backend"],
+            reid_status["resolved_config_path"],
+            reid_status["resolved_weights_path"],
+        )
         logger.info("-" * 60)
 
         try:
@@ -219,6 +242,9 @@ class MatchAnalysisPipeline:
 
                 # Continuous team assignment (EVERY frame, not cached)
                 self._assign_teams_continuous(frame, player_tracks)
+
+                # Module 2.25: Jersey OCR on tracked player crops
+                self.jersey_ocr.process_tracks(frame, player_tracks, frame_idx)
 
                 # Module 2.5: ROBUST RE-ID - Map ByteTrack IDs to Stable IDs
                 player_tracks = self.robust_reid.process_frame(frame, player_tracks, frame_idx)
@@ -387,4 +413,9 @@ class MatchAnalysisPipeline:
             "possession": poss,
             "ml_detector_used": self._ml_enabled,
             "statsbomb_report": statsbomb_path,
+            "reid_backend": reid_status["backend"],
+            "reid_model_path": reid_status["resolved_weights_path"],
+            "reid_config_path": reid_status["resolved_config_path"],
+            "reid_fallback_reason": reid_status["fallback_reason"],
+            "reid_strict_mode": reid_status["strict_fastreid"],
         }

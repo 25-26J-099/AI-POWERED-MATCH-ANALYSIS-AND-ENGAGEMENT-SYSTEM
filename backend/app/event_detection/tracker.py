@@ -41,6 +41,8 @@ class Track:
     class_id: int
     class_name: str = ""
     team_id: int = -1
+    jersey_number: Optional[str] = None
+    jersey_confidence: float = 0.0
     is_ball: bool = False
     is_referee: bool = False
     # History for velocity/trajectory

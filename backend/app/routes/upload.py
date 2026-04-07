@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.commentary.adaptive import COMMENTARY_STYLES, COMMENTARY_VERBOSITY
 from app.config.settings import settings
 from app.database.database import get_db
 from app.models.models import Match
@@ -24,6 +25,9 @@ ALLOWED_COMMENTARY_LEVELS = ("Beginner", "Intermediate", "Expert")
 async def upload_video(
     video: UploadFile = File(...),
     commentary_level: str = Form("Intermediate"),
+    commentary_verbosity: str = Form("medium"),
+    educational_mode: bool = Form(False),
+    commentary_style: str = Form("neutral"),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a video and create a match record (pipeline starts after lineup setup)."""
@@ -31,6 +35,16 @@ async def upload_video(
         raise HTTPException(
             status_code=422,
             detail=f"Invalid commentary_level. Expected one of: {', '.join(ALLOWED_COMMENTARY_LEVELS)}",
+        )
+    if commentary_verbosity not in COMMENTARY_VERBOSITY:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid commentary_verbosity. Expected one of: {', '.join(COMMENTARY_VERBOSITY)}",
+        )
+    if commentary_style not in COMMENTARY_STYLES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid commentary_style. Expected one of: {', '.join(COMMENTARY_STYLES)}",
         )
 
     filename = video.filename or "uploaded_video.mp4"
@@ -53,7 +67,12 @@ async def upload_video(
     match = Match(
         video_path=str(video_path),
         tracking_job_id=job.job_id,
-        tracking_artifacts={"commentary_level": commentary_level},
+        tracking_artifacts={
+            "commentary_level": commentary_level,
+            "commentary_verbosity": commentary_verbosity,
+            "educational_mode": educational_mode,
+            "commentary_style": commentary_style,
+        },
         status="lineup_pending",
         status_detail="Video uploaded. Waiting for lineup setup...",
     )
@@ -66,6 +85,9 @@ async def upload_video(
         "job_id": job.job_id,
         "status": match.status,
         "commentary_level": commentary_level,
+        "commentary_verbosity": commentary_verbosity,
+        "educational_mode": educational_mode,
+        "commentary_style": commentary_style,
         "message": "Video uploaded. Proceed to lineup setup.",
     }
 
@@ -97,4 +119,3 @@ async def proceed_pipeline(match_id: int, db: AsyncSession = Depends(get_db)):
         "status": "uploading",
         "message": "Pipeline started.",
     }
-

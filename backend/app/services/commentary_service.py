@@ -4,6 +4,7 @@ import shutil
 import logging
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from app.commentary.adaptive import normalize_commentary_level, resolve_audience_profile
 from app.database.database import async_session
 from app.models.models import Match, Event, PlayerStats, CommentaryOutput
 from app.services.commentary_parser import parse_combined_events
@@ -43,6 +44,28 @@ def _resolve_tactical_commentary_level(match: Match) -> str:
     if settings_level in ALLOWED_COMMENTARY_LEVELS:
         return str(settings_level)
     return "Intermediate"
+
+
+def _resolve_commentary_profile(match: Match) -> dict:
+    tracking_artifacts = match.tracking_artifacts if isinstance(match.tracking_artifacts, dict) else {}
+    profile = resolve_audience_profile(
+        level=tracking_artifacts.get("commentary_level"),
+        profile={
+            "verbosity": tracking_artifacts.get("commentary_verbosity", getattr(settings, "COMMENTARY_VERBOSITY", "medium")),
+            "educational_mode": tracking_artifacts.get(
+                "educational_mode",
+                getattr(settings, "COMMENTARY_EDUCATIONAL_MODE", False),
+            ),
+            "style": tracking_artifacts.get("commentary_style", getattr(settings, "COMMENTARY_STYLE", "neutral")),
+        },
+        signals={
+            "educational_mode": tracking_artifacts.get("educational_mode"),
+            "verbosity": tracking_artifacts.get("commentary_verbosity"),
+            "style": tracking_artifacts.get("commentary_style"),
+        },
+    )
+    profile.level = normalize_commentary_level(profile.level, default=_resolve_tactical_commentary_level(match))
+    return profile.to_dict()
 
 
 async def generate_commentary(match_id: int):
@@ -112,6 +135,7 @@ async def generate_commentary(match_id: int):
         await session.commit()
 
         tactical_level = _resolve_tactical_commentary_level(match)
+        commentary_profile = _resolve_commentary_profile(match)
         logger.info("Commentary pipeline using tactical level=%s for match_id=%s", tactical_level, match_id)
         
         # Determine source video (fallback to demo if testing, else use uploaded video)
@@ -151,7 +175,8 @@ async def generate_commentary(match_id: int):
                 level=tactical_level,
                 analytics_context=analytics_context,
                 progress_callback=progress_cb,
-                done_callback=done_cb
+                done_callback=done_cb,
+                audience_profile=commentary_profile,
             )
             return out_file
 

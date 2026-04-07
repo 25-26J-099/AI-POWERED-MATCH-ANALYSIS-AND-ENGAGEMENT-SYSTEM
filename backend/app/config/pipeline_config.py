@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict
 
+from app.config.settings import settings
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 INPUT_DIR = os.path.join(BASE_DIR, "input")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
@@ -69,14 +71,64 @@ class TeamAssignmentConfig:
 
 
 @dataclass
+class OCRConfig:
+    enable: bool = True
+    backend: str = "easyocr"
+    use_gpu: bool = True
+    confidence_threshold: float = 0.5
+    update_interval: int = 5
+    history_size: int = 12
+    top_region_ratio: float = 0.55
+    resize_scale: float = 4.0
+    min_crop_height: int = 24
+    min_crop_width: int = 12
+    use_thresholding: bool = True
+    center_strip_ratio: float = 0.58
+    expanded_region_ratio: float = 0.7
+    horizontal_inset_ratio: float = 0.18
+    horizontal_expand_ratio: float = 0.1
+    max_crop_candidates: int = 3
+    max_variants_per_crop: int = 6
+    clahe_clip_limit: float = 3.0
+    clahe_grid_size: int = 8
+    blur_threshold: float = 55.0
+    min_quality_score: float = 0.2
+    adaptive_block_size: int = 31
+    adaptive_c: int = 11
+    morphology_kernel_size: int = 3
+    denoise_strength: int = 7
+    aggregation_margin: float = 0.12
+    min_support_count: int = 2
+    stable_lock_threshold: float = 0.72
+    replacement_threshold: float = 1.25
+    decay_per_frame: float = 0.92
+
+
+@dataclass
 class ReIDConfig:
     enable: bool = True
+
+    device: str = settings.FASTREID_DEVICE
+    backend_priority: Tuple[str, ...] = tuple(
+        backend.strip()
+        for backend in settings.REID_BACKEND_PRIORITY.split(",")
+        if backend.strip()
+    ) or ("fastreid", "torchreid", "handcrafted")
+    model_path: str = settings.FASTREID_WEIGHTS_PATH
+    fastreid_config_path: str = settings.FASTREID_CONFIG_PATH
+    torchreid_model_name: str = "osnet_ain_x1_0"
+    fastreid_enabled: bool = settings.FASTREID_ENABLED
+    strict_fastreid: bool = settings.FASTREID_STRICT
+    hf_fastreid_repo: str = settings.HF_FASTREID_REPO or ""
+    hf_fastreid_config_file: str = settings.HF_FASTREID_CONFIG_FILE
+    hf_fastreid_weights_file: str = settings.HF_FASTREID_WEIGHTS_FILE
 
     feature_dim: int = 128
     max_lost_frames: int = 120
 
     # Core thresholds
-    appearance_threshold: float = 0.55
+    appearance_threshold: float = 0.82
+    similarity_threshold: float = 0.82
     spatial_threshold: float = 250.0
     combined_threshold: float = 0.65
 
@@ -84,6 +136,11 @@ class ReIDConfig:
     appearance_weight: float = 0.5
     spatial_weight: float = 0.5
     num_body_parts: int = 3
+    embedding_history_size: int = 10
+    max_embedding_history: int = 30
+    crop_width: int = 128
+    crop_height: int = 256
+    use_team_constraint: bool = True
 
     # Adaptive thresholding
     use_adaptive_thresholds: bool = True
@@ -361,6 +418,7 @@ class PipelineConfig:
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     tracking: TrackingConfig = field(default_factory=TrackingConfig)
     team_assignment: TeamAssignmentConfig = field(default_factory=TeamAssignmentConfig)
+    ocr: OCRConfig = field(default_factory=OCRConfig)
     reid: ReIDConfig = field(default_factory=ReIDConfig)
     event_detection: EventDetectionConfig = field(default_factory=EventDetectionConfig)
     optimization: OptimizationConfig = field(default_factory=OptimizationConfig)

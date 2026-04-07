@@ -1,0 +1,36 @@
+{
+  "usable_samples": 1855,
+  "dropped_samples": 0,
+  "active_heads": [
+    "formation",
+    "team_shape",
+    "attacking_structure",
+    "defensive_block",
+    "defensive_shape"
+  ],
+  "head_status": {
+    "formation": "8 labels available",
+    "team_shape": "5 labels available",
+    "attacking_structure": "4 labels available",
+    "defensive_block": "3 labels available",
+    "defensive_shape": "4 labels available"
+  },
+  "train_samples": 1484,
+  "val_samples": 371,
+  "allow_pseudo_labels": true,
+  "final_metrics": {
+    "epoch": 20.0,
+    "train_loss": 0.8927170845770067,
+    "formation_loss": 1.8473137617111206,
+    "team_shape_loss": 0.6892625689506531,
+    "attacking_structure_loss": 0.5936394333839417,
+    "defensive_block_loss": 0.5300237536430359,
+    "defensive_shape_loss": 1.1903740167617798,
+    "val_loss": 0.9534496565659841,
+    "val_formation_accuracy": 0.30997304582210244,
+    "val_team_shape_accuracy": 0.6415094339622641,
+    "val_attacking_structure_accuracy": 0.7816711590296496,
+    "val_defensive_block_accuracy": 0.8355795148247979,
+    "val_defensive_shape_accuracy": 0.6199460916442049
+  }
+}

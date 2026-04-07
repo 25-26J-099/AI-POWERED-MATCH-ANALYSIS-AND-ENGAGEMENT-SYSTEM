@@ -1,281 +1,138 @@
 """
-Module 3: Robust Player Re-Identification (Re-ID).
+Compatibility shim for the legacy gallery-style player Re-ID module.
 
-Hybrid approach combining:
-1. Appearance-based features (lightweight CNN embeddings)
-2. Trajectory prediction (Kalman filter / linear extrapolation)
-3. Part-based features for occlusion robustness
-
-Addresses the unique challenges of sports Re-ID:
-- High intra-class similarity (identical uniforms)
-- Severe occlusions (player clusters)
-- Image degradation (motion blur, low resolution)
+The authoritative stable-ID mapping now lives in `robust_reid.py`. This module keeps
+the old interface intact so existing pipeline calls do not break, while routing any
+appearance extraction through the shared ReIDModel backend.
 """
-import cv2
-import numpy as np
-import logging
-from typing import Dict, Tuple, Optional, List
+from __future__ import annotations
+
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+import logging
+
+import numpy as np
+
+from app.event_detection.reid_module import ReIDModel
 
 logger = logging.getLogger(__name__)
 
 
+def _normalize_vector(vector: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    if vector is None:
+        return None
+    arr = np.asarray(vector, dtype=np.float32).reshape(-1)
+    if arr.size == 0:
+        return None
+    norm = float(np.linalg.norm(arr))
+    if norm <= 1e-8:
+        return None
+    return arr / norm
+
+
 @dataclass
 class PlayerGallery:
-    """Stored appearance and motion data for a previously tracked player."""
     track_id: int
-    appearance_features: List[np.ndarray] = field(default_factory=list)
-    part_features: Dict[str, np.ndarray] = field(default_factory=dict)
+    embedding_history: List[np.ndarray] = field(default_factory=list)
     last_positions: List[Tuple[float, float]] = field(default_factory=list)
     last_velocity: Tuple[float, float] = (0.0, 0.0)
     team_id: int = -1
     lost_frame: int = 0
     predicted_position: Optional[Tuple[float, float]] = None
+    jersey_number: Optional[str] = None
 
     @property
-    def mean_appearance(self) -> Optional[np.ndarray]:
-        if not self.appearance_features:
+    def mean_embedding(self) -> Optional[np.ndarray]:
+        if not self.embedding_history:
             return None
-        return np.mean(self.appearance_features[-5:], axis=0)  # Use last 5
-
-
-class AppearanceExtractor:
-    """
-    Lightweight CNN-based appearance feature extractor.
-    Uses a color histogram + HOG hybrid for efficiency on low-resource hardware.
-    Falls back to handcrafted features when CNN unavailable.
-    """
-
-    def __init__(self, feature_dim: int = 128, num_parts: int = 3):
-        self.feature_dim = feature_dim
-        self.num_parts = num_parts
-        self.target_size = (64, 128)  # width, height
-
-    def _extract_color_histogram(self, image: np.ndarray) -> np.ndarray:
-        """Extract normalized color histogram in HSV space."""
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        # H: 16 bins, S: 8 bins, V: 8 bins
-        hist_h = cv2.calcHist([hsv], [0], None, [16], [0, 180])
-        hist_s = cv2.calcHist([hsv], [1], None, [8], [0, 256])
-        hist_v = cv2.calcHist([hsv], [2], None, [8], [0, 256])
-
-        hist = np.concatenate([hist_h, hist_s, hist_v]).flatten()
-        hist = hist / (np.sum(hist) + 1e-8)
-        return hist
-
-    def _extract_texture_features(self, image: np.ndarray) -> np.ndarray:
-        """Extract texture features using Local Binary Pattern approximation."""
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        gray = cv2.resize(gray, (32, 64))
-
-        # Compute gradient-based texture features
-        gx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        gy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        magnitude = np.sqrt(gx ** 2 + gy ** 2)
-        orientation = np.arctan2(gy, gx)
-
-        # Histogram of oriented gradients (simplified)
-        n_bins = 8
-        hist, _ = np.histogram(orientation, bins=n_bins, range=(-np.pi, np.pi),
-                                weights=magnitude)
-        hist = hist / (np.sum(hist) + 1e-8)
-        return hist
-
-    def extract(self, frame: np.ndarray, bbox: Tuple[float, float, float, float]) -> Optional[np.ndarray]:
-        """Extract appearance feature vector from a player bounding box."""
-        x1, y1, x2, y2 = [int(v) for v in bbox]
-
-        # Bounds check
-        h, w = frame.shape[:2]
-        x1 = max(0, x1)
-        y1 = max(0, y1)
-        x2 = min(w, x2)
-        y2 = min(h, y2)
-
-        if x2 - x1 < 5 or y2 - y1 < 10:
-            return None
-
-        crop = frame[y1:y2, x1:x2]
-        crop = cv2.resize(crop, self.target_size)
-
-        # Extract features
-        color_feat = self._extract_color_histogram(crop)
-        texture_feat = self._extract_texture_features(crop)
-
-        # Combine features
-        feature = np.concatenate([color_feat, texture_feat])
-
-        # Normalize to unit vector
-        norm = np.linalg.norm(feature)
-        if norm > 0:
-            feature = feature / norm
-
-        return feature
-
-    def extract_parts(
-        self,
-        frame: np.ndarray,
-        bbox: Tuple[float, float, float, float],
-    ) -> Dict[str, np.ndarray]:
-        """
-        Extract part-based features for occlusion-robust matching.
-        Divides the body into horizontal strips (head, torso, legs).
-        """
-        x1, y1, x2, y2 = [int(v) for v in bbox]
-        h, w = frame.shape[:2]
-        x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(w, x2), min(h, y2)
-
-        if x2 - x1 < 5 or y2 - y1 < 10:
-            return {}
-
-        crop = frame[y1:y2, x1:x2]
-        part_h = crop.shape[0] // self.num_parts
-
-        parts = {}
-        part_names = ["upper", "middle", "lower"]
-
-        for i in range(self.num_parts):
-            py1 = i * part_h
-            py2 = (i + 1) * part_h if i < self.num_parts - 1 else crop.shape[0]
-            part_crop = crop[py1:py2, :]
-
-            if part_crop.size == 0:
-                continue
-
-            feat = self._extract_color_histogram(part_crop)
-            norm = np.linalg.norm(feat)
-            if norm > 0:
-                feat = feat / norm
-            parts[part_names[i] if i < len(part_names) else f"part_{i}"] = feat
-
-        return parts
+        recent = self.embedding_history[-10:]
+        mean_vector = np.mean(np.stack(recent, axis=0), axis=0)
+        return _normalize_vector(mean_vector)
 
 
 class TrajectoryPredictor:
-    """
-    Simple trajectory prediction using linear velocity model.
-    Estimates where a lost player might re-appear.
-    """
-
-    def predict(
-        self,
-        positions: List[Tuple[float, float]],
-        n_frames_ahead: int = 1,
-    ) -> Optional[Tuple[float, float]]:
-        """Predict future position using linear extrapolation."""
+    def predict(self, positions: List[Tuple[float, float]], n_frames_ahead: int = 1) -> Optional[Tuple[float, float]]:
         if len(positions) < 2:
             return positions[-1] if positions else None
+        recent = positions[-min(10, len(positions)) :]
+        dx = (recent[-1][0] - recent[0][0]) / max(len(recent) - 1, 1)
+        dy = (recent[-1][1] - recent[0][1]) / max(len(recent) - 1, 1)
+        return (recent[-1][0] + dx * n_frames_ahead, recent[-1][1] + dy * n_frames_ahead)
 
-        # Use last few positions for velocity estimation
-        n = min(10, len(positions))
-        recent = positions[-n:]
-
-        # Compute average velocity
-        dx = (recent[-1][0] - recent[0][0]) / (len(recent) - 1)
-        dy = (recent[-1][1] - recent[0][1]) / (len(recent) - 1)
-
-        return (
-            recent[-1][0] + dx * n_frames_ahead,
-            recent[-1][1] + dy * n_frames_ahead,
-        )
-
-    def compute_velocity(
-        self,
-        positions: List[Tuple[float, float]],
-    ) -> Tuple[float, float]:
-        """Compute current velocity vector."""
+    def compute_velocity(self, positions: List[Tuple[float, float]]) -> Tuple[float, float]:
         if len(positions) < 2:
             return (0.0, 0.0)
-        return (
-            positions[-1][0] - positions[-2][0],
-            positions[-1][1] - positions[-2][1],
-        )
+        return (positions[-1][0] - positions[-2][0], positions[-1][1] - positions[-2][1])
 
 
 class PlayerReIDModule:
     """
-    Player Re-Identification module.
+    Legacy-compatible gallery module.
 
-    Maintains a gallery of lost player appearances and uses hybrid matching
-    (appearance + trajectory) to re-identify players when they re-enter the frame.
+    This keeps the historical interface used by the pipeline, but it is no longer the
+    source of truth for stable identity assignment. It is kept as a lightweight shim for
+    compatibility and future extensions.
     """
 
     def __init__(self, config):
         self.cfg = config.reid
-        self.appearance_extractor = AppearanceExtractor(
-            feature_dim=self.cfg.feature_dim,
-            num_parts=self.cfg.num_body_parts,
-        )
+        self.reid_model = ReIDModel(model_path=self.cfg.model_path or None, config=self.cfg)
         self.trajectory_predictor = TrajectoryPredictor()
-
-        # Gallery of lost player identities
         self.gallery: Dict[int, PlayerGallery] = OrderedDict()
         self.max_gallery_size = 100
+        self.similarity_threshold = getattr(self.cfg, "similarity_threshold", self.cfg.appearance_threshold)
 
-    def update_gallery(
-        self,
-        frame: np.ndarray,
-        active_tracks: Dict,
-        lost_tracks: Dict,
-        frame_idx: int,
-    ):
-        """
-        Update the Re-ID gallery:
-        1. Update appearance features for active tracks
-        2. Add newly lost tracks to gallery
-        3. Remove expired gallery entries
-        """
-        # Update active track appearances (periodically)
+    def infer_jersey_number(self, _crop) -> Optional[str]:
+        """Placeholder for future OCR integration."""
+        return None
+
+    def update_gallery(self, frame: np.ndarray, active_tracks: Dict, lost_tracks: Dict, frame_idx: int) -> None:
         for tid, track in active_tracks.items():
-            if track.frames_tracked % 5 == 0:  # Update every 5 frames
-                feat = self.appearance_extractor.extract(frame, track.bbox)
-                if feat is not None:
-                    if tid not in self.gallery:
-                        self.gallery[tid] = PlayerGallery(
-                            track_id=tid,
-                            team_id=track.team_id,
-                        )
-                    self.gallery[tid].appearance_features.append(feat)
-                    # Keep reasonable size
-                    if len(self.gallery[tid].appearance_features) > 10:
-                        self.gallery[tid].appearance_features = \
-                            self.gallery[tid].appearance_features[-5:]
+            if getattr(track, "is_ball", False) or getattr(track, "is_referee", False):
+                continue
+            if track.frames_tracked % 5 != 0:
+                continue
 
-                    # Extract part features
-                    parts = self.appearance_extractor.extract_parts(frame, track.bbox)
-                    if parts:
-                        self.gallery[tid].part_features = parts
+            crop = self.reid_model.crop_player(frame, track.bbox)
+            embedding = self.reid_model.extract_embedding(crop)
+            if embedding is None:
+                continue
 
-                    self.gallery[tid].last_positions = list(track.position_history[-20:])
-                    self.gallery[tid].team_id = track.team_id
+            if tid not in self.gallery:
+                self.gallery[tid] = PlayerGallery(track_id=tid, team_id=track.team_id)
 
-        # Add lost tracks to gallery
+            entry = self.gallery[tid]
+            entry.embedding_history.append(embedding)
+            if len(entry.embedding_history) > self.cfg.max_embedding_history:
+                entry.embedding_history = entry.embedding_history[-self.cfg.max_embedding_history :]
+
+            entry.last_positions = list(track.position_history[-20:])
+            entry.last_velocity = self.trajectory_predictor.compute_velocity(entry.last_positions)
+            entry.team_id = track.team_id
+            entry.jersey_number = getattr(track, "jersey_number", None)
+
         for tid, track in lost_tracks.items():
-            if tid in self.gallery:
-                self.gallery[tid].lost_frame = frame_idx
-                # Predict where they might reappear
-                if track.position_history:
-                    self.gallery[tid].predicted_position = \
-                        self.trajectory_predictor.predict(
-                            track.position_history,
-                            n_frames_ahead=track.frames_lost,
-                        )
-                    self.gallery[tid].last_velocity = \
-                        self.trajectory_predictor.compute_velocity(
-                            track.position_history,
-                        )
+            if tid not in self.gallery:
+                continue
+            entry = self.gallery[tid]
+            entry.lost_frame = frame_idx
+            if track.position_history:
+                positions = list(track.position_history)
+                entry.predicted_position = self.trajectory_predictor.predict(
+                    positions,
+                    n_frames_ahead=track.frames_lost,
+                )
+                entry.last_velocity = self.trajectory_predictor.compute_velocity(positions)
 
-        # Remove expired entries
         expired = [
-            tid for tid, g in self.gallery.items()
-            if g.lost_frame > 0 and (frame_idx - g.lost_frame) > self.cfg.max_lost_frames
+            tid
+            for tid, entry in self.gallery.items()
+            if entry.lost_frame > 0 and (frame_idx - entry.lost_frame) > self.cfg.max_lost_frames
         ]
         for tid in expired:
             del self.gallery[tid]
 
-        # Limit gallery size
         while len(self.gallery) > self.max_gallery_size:
             self.gallery.popitem(last=False)
 
@@ -286,104 +143,57 @@ class PlayerReIDModule:
         new_team_id: int = -1,
         frame_idx: int = 0,
     ) -> Optional[int]:
-        """
-        Attempt to match a new unidentified track to a previously lost player.
-
-        Uses hybrid scoring:
-        - Appearance similarity (cosine similarity of feature embeddings)
-        - Spatial proximity (distance from predicted re-entry position)
-        - Part-based matching for occluded cases
-
-        Returns matched gallery track_id, or None if no match found.
-        """
-        if not self.gallery:
+        del frame_idx
+        crop = self.reid_model.crop_player(frame, new_bbox)
+        embedding = self.reid_model.extract_embedding(crop)
+        if embedding is None:
             return None
 
-        # Extract features for new detection
-        new_feat = self.appearance_extractor.extract(frame, new_bbox)
-        if new_feat is None:
-            return None
-
-        new_center = (
-            (new_bbox[0] + new_bbox[2]) / 2,
-            (new_bbox[1] + new_bbox[3]) / 2,
-        )
-
+        new_center = ((new_bbox[0] + new_bbox[2]) / 2, (new_bbox[1] + new_bbox[3]) / 2)
         best_match = None
-        best_score = -1
+        best_score = -1.0
 
-        for tid, gallery_entry in self.gallery.items():
-            # Only match against lost tracks
-            if gallery_entry.lost_frame == 0:
+        for tid, entry in self.gallery.items():
+            if entry.lost_frame == 0:
+                continue
+            if new_team_id >= 0 and entry.team_id >= 0 and new_team_id != entry.team_id:
                 continue
 
-            # Team consistency check
-            if new_team_id >= 0 and gallery_entry.team_id >= 0:
-                if new_team_id != gallery_entry.team_id:
-                    continue
-
-            # 1. Appearance similarity
-            ref_feat = gallery_entry.mean_appearance
-            if ref_feat is None:
+            mean_embedding = entry.mean_embedding
+            if mean_embedding is None:
                 continue
 
-            appearance_sim = float(np.dot(new_feat, ref_feat) /
-                                    (np.linalg.norm(new_feat) * np.linalg.norm(ref_feat) + 1e-8))
+            appearance_score = self.reid_model.compute_similarity(embedding, mean_embedding)
+            if appearance_score < self.similarity_threshold:
+                continue
 
-            # 2. Spatial proximity
             spatial_score = 0.0
-            if gallery_entry.predicted_position is not None:
-                dist = np.sqrt(
-                    (new_center[0] - gallery_entry.predicted_position[0]) ** 2 +
-                    (new_center[1] - gallery_entry.predicted_position[1]) ** 2
+            if entry.predicted_position is not None:
+                distance = float(
+                    np.sqrt(
+                        (new_center[0] - entry.predicted_position[0]) ** 2
+                        + (new_center[1] - entry.predicted_position[1]) ** 2
+                    )
                 )
-                if dist < self.cfg.spatial_threshold:
-                    spatial_score = 1.0 - (dist / self.cfg.spatial_threshold)
+                if distance < self.cfg.spatial_threshold:
+                    spatial_score = 1.0 - (distance / max(self.cfg.spatial_threshold, 1e-8))
 
-            # 3. Part-based matching (bonus for partial matches)
-            part_bonus = 0.0
-            if gallery_entry.part_features:
-                new_parts = self.appearance_extractor.extract_parts(frame, new_bbox)
-                matching_parts = 0
-                total_parts = 0
-                for part_name, ref_part in gallery_entry.part_features.items():
-                    if part_name in new_parts:
-                        total_parts += 1
-                        part_sim = float(np.dot(new_parts[part_name], ref_part))
-                        if part_sim > 0.5:
-                            matching_parts += 1
-                if total_parts > 0:
-                    part_bonus = 0.1 * (matching_parts / total_parts)
-
-            # Combined hybrid score
-            score = (
-                self.cfg.appearance_weight * appearance_sim +
-                self.cfg.spatial_weight * spatial_score +
-                part_bonus
-            )
-
-            if score > best_score and appearance_sim > self.cfg.appearance_threshold:
+            score = 0.7 * appearance_score + 0.3 * spatial_score
+            if score > best_score:
                 best_score = score
                 best_match = tid
 
-        if best_match is not None and best_score > 0.5:
-            logger.debug(
-                f"Re-ID match: new detection -> track #{best_match} "
-                f"(score={best_score:.3f})"
-            )
-            # Remove from lost gallery
-            if best_match in self.gallery:
-                self.gallery[best_match].lost_frame = 0
-            return best_match
-
-        return None
+        if best_match is not None:
+            self.gallery[best_match].lost_frame = 0
+            logger.debug("[Legacy Re-ID] matched new track to gallery entry %s (score=%.3f)", best_match, best_score)
+        return best_match
 
     def get_gallery_stats(self) -> dict:
-        """Return statistics about the Re-ID gallery."""
-        active = sum(1 for g in self.gallery.values() if g.lost_frame == 0)
-        lost = sum(1 for g in self.gallery.values() if g.lost_frame > 0)
+        active = sum(1 for entry in self.gallery.values() if entry.lost_frame == 0)
+        lost = sum(1 for entry in self.gallery.values() if entry.lost_frame > 0)
         return {
             "gallery_size": len(self.gallery),
             "active_entries": active,
             "lost_entries": lost,
+            "backend": self.reid_model.backend,
         }

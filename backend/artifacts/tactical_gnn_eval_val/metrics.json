@@ -1,0 +1,200 @@
+{
+  "dataset_report": {
+    "input_path": "data\\tactical_gnn\\gnn_synthetic_augmented.jsonl",
+    "source_files": [
+      "data\\tactical_gnn\\gnn_synthetic_augmented.jsonl"
+    ],
+    "detected_formats": [
+      "generic"
+    ],
+    "total_records": 1855,
+    "usable_samples": 1855,
+    "dropped_samples": 0,
+    "dropped_reasons": {},
+    "label_counts": {
+      "formation": {
+        "4-3-3": 315,
+        "4-2-3-1": 270,
+        "3-4-3": 265,
+        "4-4-2": 300,
+        "Unclear": 160,
+        "3-5-2": 200,
+        "5-3-2": 175,
+        "4-1-4-1": 170
+      },
+      "team_shape": {
+        "Balanced Shape": 405,
+        "Vertical Shape": 265,
+        "Stretched Shape": 215,
+        "Compact Shape": 545,
+        "Wide Shape": 425
+      },
+      "attacking_structure": {
+        "Balanced Structure": 710,
+        "Vertical Support Structure": 495,
+        "Wide Structure": 280,
+        "Central Overload": 370
+      },
+      "defensive_block": {
+        "Mid Block": 775,
+        "High Press": 445,
+        "Low Block": 635
+      },
+      "defensive_shape": {
+        "Compact Balanced": 745,
+        "Spread Wide": 460,
+        "Unknown": 305,
+        "Compact Narrow": 345
+      }
+    },
+    "label_source_counts": {
+      "formation": {
+        "synthetic_expert_rule": 1855
+      },
+      "team_shape": {
+        "synthetic_expert_rule": 1855
+      },
+      "attacking_structure": {
+        "synthetic_expert_rule": 1855
+      },
+      "defensive_block": {
+        "synthetic_expert_rule": 1855
+      },
+      "defensive_shape": {
+        "synthetic_expert_rule": 1855
+      }
+    },
+    "active_heads": [
+      "formation",
+      "team_shape",
+      "attacking_structure",
+      "defensive_block",
+      "defensive_shape"
+    ],
+    "schema_notes": []
+  },
+  "checkpoint_path": "checkpoints/tactical_gnn/model.pt",
+  "device": "cpu",
+  "evaluation_split": "val",
+  "evaluated_samples": 371,
+  "heads": {
+    "formation": {
+      "support": 371,
+      "accuracy": 0.3045822102425876,
+      "macro_f1": 0.2894233209733894,
+      "micro_f1": 0.3045822102425876,
+      "label_support": {
+        "3-5-2": 44,
+        "3-4-3": 51,
+        "4-4-2": 63,
+        "Unclear": 39,
+        "4-1-4-1": 31,
+        "5-3-2": 31,
+        "4-3-3": 53,
+        "4-2-3-1": 59
+      },
+      "prediction_distribution": {
+        "4-3-3": 53,
+        "3-4-3": 31,
+        "Unclear": 20,
+        "4-4-2": 86,
+        "4-2-3-1": 76,
+        "5-3-2": 40,
+        "3-5-2": 51,
+        "4-1-4-1": 14
+      },
+      "label_source_support": {
+        "synthetic_expert_rule": 371
+      },
+      "mean_confidence": 0.3302168515171966
+    },
+    "team_shape": {
+      "support": 371,
+      "accuracy": 0.660377358490566,
+      "macro_f1": 0.59711039546642,
+      "micro_f1": 0.660377358490566,
+      "label_support": {
+        "Balanced Shape": 85,
+        "Wide Shape": 81,
+        "Stretched Shape": 49,
+        "Vertical Shape": 55,
+        "Compact Shape": 101
+      },
+      "prediction_distribution": {
+        "Balanced Shape": 84,
+        "Wide Shape": 99,
+        "Compact Shape": 107,
+        "Vertical Shape": 58,
+        "Stretched Shape": 23
+      },
+      "label_source_support": {
+        "synthetic_expert_rule": 371
+      },
+      "mean_confidence": 0.6488255405361761
+    },
+    "attacking_structure": {
+      "support": 371,
+      "accuracy": 0.7331536388140162,
+      "macro_f1": 0.7227554277930721,
+      "micro_f1": 0.7331536388140162,
+      "label_support": {
+        "Balanced Structure": 154,
+        "Wide Structure": 47,
+        "Vertical Support Structure": 98,
+        "Central Overload": 72
+      },
+      "prediction_distribution": {
+        "Balanced Structure": 124,
+        "Wide Structure": 52,
+        "Central Overload": 78,
+        "Vertical Support Structure": 117
+      },
+      "label_source_support": {
+        "synthetic_expert_rule": 371
+      },
+      "mean_confidence": 0.7249282719793345
+    },
+    "defensive_block": {
+      "support": 371,
+      "accuracy": 0.8355795148247979,
+      "macro_f1": 0.8268110084928045,
+      "micro_f1": 0.8355795148247979,
+      "label_support": {
+        "Mid Block": 155,
+        "High Press": 99,
+        "Low Block": 117
+      },
+      "prediction_distribution": {
+        "Mid Block": 159,
+        "Low Block": 124,
+        "High Press": 88
+      },
+      "label_source_support": {
+        "synthetic_expert_rule": 371
+      },
+      "mean_confidence": 0.8315924074289933
+    },
+    "defensive_shape": {
+      "support": 371,
+      "accuracy": 0.5795148247978437,
+      "macro_f1": 0.5702204471987709,
+      "micro_f1": 0.5795148247978437,
+      "label_support": {
+        "Compact Balanced": 140,
+        "Spread Wide": 97,
+        "Unknown": 66,
+        "Compact Narrow": 68
+      },
+      "prediction_distribution": {
+        "Compact Balanced": 147,
+        "Spread Wide": 102,
+        "Compact Narrow": 73,
+        "Unknown": 49
+      },
+      "label_source_support": {
+        "synthetic_expert_rule": 371
+      },
+      "mean_confidence": 0.6112409538496537
+    }
+  }
+}

@@ -2,16 +2,19 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.settings import settings
 from app.database.database import get_db
 from app.models.models import Match
 from app.models.schemas import (
-    AnalyzePathRequest, AnalysisResultResponse, EventListResponse, JobCreatedResponse, JobStatusResponse,
+    AnalyzePathRequest, AnalysisResultResponse, AnalyzeUploadRequest, EventListResponse, JobCreatedResponse,
+    JobStatusResponse,
 )
 from app.services.analysis_service import AnalysisRequestOptions
 from app.services.artifact_service import ArtifactService
@@ -91,6 +94,81 @@ async def analyze_video_by_path(
         tracking_job_id=record.job_id,
         status="tracking",
         status_detail="Tracking job started from the Component 1 API.",
+    )
+    db.add(match)
+    await db.commit()
+    await db.refresh(match)
+
+    asyncio.create_task(monitor_tracking_job(match.id, record.job_id))
+
+    return _to_job_created_response(request, record.job_id, record.submitted_at, match.id)
+
+
+@router.post(
+    "/analyze/upload",
+    response_model=JobCreatedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def analyze_video_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    job_service: JobService = Depends(get_job_service),
+) -> JobCreatedResponse:
+    payload = AnalyzeUploadRequest()
+    options = AnalysisRequestOptions(
+        model=payload.model,
+        confidence=payload.confidence,
+        device=payload.device,
+        frame_skip=payload.frame_skip,
+        max_width=payload.max_width,
+        max_height=payload.max_height,
+        enable_stabilization=payload.enable_stabilization,
+        enable_reid=payload.enable_reid,
+        enable_events=payload.enable_events,
+        enable_minimap=payload.enable_minimap,
+        enable_freeze_frames=payload.enable_freeze_frames,
+        quiet=payload.quiet,
+        enable_ml_detector=payload.enable_ml_detector,
+        ml_model_path=payload.ml_model_path,
+        ml_confidence=payload.ml_confidence,
+        ml_device=payload.ml_device,
+    )
+
+    upload_dir = Path(settings.UPLOAD_DIR) / "api_uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename or "upload.mp4").suffix or ".mp4"
+    input_path = upload_dir / f"{uuid.uuid4().hex}{suffix}"
+
+    try:
+        with input_path.open("wb") as output_file:
+            while chunk := await file.read(1024 * 1024):
+                output_file.write(chunk)
+    finally:
+        await file.close()
+
+    record = job_service.create_job()
+    try:
+        job_service.start_job(
+            job_id=record.job_id,
+            input_path=str(input_path),
+            options=options,
+            output_name=payload.output_name,
+        )
+    except FileNotFoundError as exc:
+        job_service.delete_job(record.job_id)
+        input_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        job_service.delete_job(record.job_id)
+        input_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    match = Match(
+        video_path=str(input_path),
+        tracking_job_id=record.job_id,
+        status="tracking",
+        status_detail="Tracking job started from the Component 1 API upload endpoint.",
     )
     db.add(match)
     await db.commit()

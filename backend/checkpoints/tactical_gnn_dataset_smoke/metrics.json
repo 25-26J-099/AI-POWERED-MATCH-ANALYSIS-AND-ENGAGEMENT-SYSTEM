@@ -1,0 +1,17 @@
+[
+  {
+    "epoch": 1.0,
+    "train_loss": 1.5065913606197276,
+    "formation_loss": 1.9096201658248901,
+    "team_shape_loss": 1.1573764085769653,
+    "attacking_structure_loss": 1.175944209098816,
+    "defensive_block_loss": 0.8399490714073181,
+    "defensive_shape_loss": 1.2602417469024658,
+    "val_loss": 1.3491137822469075,
+    "val_formation_accuracy": 0.13746630727762804,
+    "val_team_shape_accuracy": 0.3881401617250674,
+    "val_attacking_structure_accuracy": 0.5983827493261455,
+    "val_defensive_block_accuracy": 0.6388140161725068,
+    "val_defensive_shape_accuracy": 0.40970350404312667
+  }
+]

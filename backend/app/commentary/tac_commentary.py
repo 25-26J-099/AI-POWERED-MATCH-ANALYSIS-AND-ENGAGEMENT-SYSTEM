@@ -11,6 +11,7 @@ Usage:
 
 import copy
 import json
+import logging
 import math
 import os
 import sys
@@ -18,6 +19,22 @@ from datetime import datetime
 
 import numpy as np
 import requests
+
+from app.commentary.adaptive import (
+    COMMENTARY_LEVELS,
+    build_adaptation_policy,
+    build_adaptive_commentary_fallback,
+    build_llm_adaptation_instructions,
+    resolve_audience_profile,
+)
+from app.tactical_gnn.inference import predict_tactical_snapshot
+from app.tactical_gnn.utils import (
+    config_from_settings,
+    infer_attacking_direction_right as shared_infer_attacking_direction_right,
+    normalize_freeze_frame as shared_normalize_freeze_frame,
+    normalize_location as shared_normalize_location,
+    normalize_x as shared_normalize_x,
+)
 
 # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 # CONFIG
@@ -39,6 +56,8 @@ PRE_GOAL_SPATIAL_SUPPRESS_SECONDS = 15.0
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL_NAME = "tac-commentary"
 
+LOGGER = logging.getLogger(__name__)
+
 SYSTEM_PROMPT = (
     "You are a professional football commentator. "
     "Generate exactly one commentary in the requested level. "
@@ -47,7 +66,7 @@ SYSTEM_PROMPT = (
     "Expert = precise tactical language with natural use of metrics when relevant."
 )
 
-LEVELS = ["Beginner", "Intermediate", "Expert"]
+LEVELS = list(COMMENTARY_LEVELS)
 
 
 # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -560,59 +579,23 @@ def summarize_sequence(events, focus_idx, max_buildup_events=4):
 # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 def infer_attacking_direction_right(freeze_frame_data):
-    if not freeze_frame_data or "freeze_frame" not in freeze_frame_data:
-        return True
-    teammates_gk_x = []
-    opponents_gk_x = []
-    for p in freeze_frame_data["freeze_frame"]:
-        if not isinstance(p, dict):
-            continue
-        loc = p.get("location")
-        if not isinstance(loc, list) or len(loc) < 2:
-            continue
-        x = float(loc[0])
-        teammate = bool(p.get("teammate", False))
-        keeper = bool(p.get("keeper", False))
-        if keeper and teammate:
-            teammates_gk_x.append(x)
-        elif keeper and not teammate:
-            opponents_gk_x.append(x)
-    if teammates_gk_x and opponents_gk_x:
-        return np.mean(opponents_gk_x) > np.mean(teammates_gk_x)
-    if opponents_gk_x:
-        return np.mean(opponents_gk_x) > 60.0
-    if teammates_gk_x:
-        return np.mean(teammates_gk_x) < 60.0
-    return True
+    return shared_infer_attacking_direction_right(freeze_frame_data, pitch_length=PITCH_X)
 
 
 def normalize_x(x, attacking_right=True):
-    return x if attacking_right else (PITCH_X - x)
+    return shared_normalize_x(x, attacking_right=attacking_right, pitch_length=PITCH_X)
 
 
 def normalize_location(loc, attacking_right=True):
-    if not loc or len(loc) < 2:
-        return None
-    x = normalize_x(float(loc[0]), attacking_right)
-    y = float(loc[1])
-    return [x, y]
+    return shared_normalize_location(loc, attacking_right=attacking_right, pitch_length=PITCH_X)
 
 
 def normalize_freeze_frame(freeze_frame_data, attacking_right=True):
-    if not freeze_frame_data or "freeze_frame" not in freeze_frame_data:
-        return None
-    ff_copy = copy.deepcopy(freeze_frame_data)
-    new_ff = []
-    for p in ff_copy["freeze_frame"]:
-        if not isinstance(p, dict):
-            continue
-        loc = p.get("location")
-        if not isinstance(loc, list) or len(loc) < 2:
-            continue
-        p["location"] = normalize_location(loc, attacking_right)
-        new_ff.append(p)
-    ff_copy["freeze_frame"] = new_ff
-    return ff_copy
+    return shared_normalize_freeze_frame(
+        freeze_frame_data,
+        attacking_right=attacking_right,
+        pitch_length=PITCH_X,
+    )
 
 
 # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -779,6 +762,72 @@ def compute_support_and_opposition_context(event_data, freeze_frame_data):
 # TACTICAL DESCRIPTION COMPOSITION
 # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
+def _heuristic_tactical_prediction(event_data, freeze_frame_data):
+    labels = analyze_tactical_snapshot(event_data, freeze_frame_data)
+    context = compute_support_and_opposition_context(event_data, freeze_frame_data)
+    return {
+        "model_used": "heuristic",
+        "formation": labels.get("formation_approx", "Unclear"),
+        "formation_approx": labels.get("formation_approx", "Unclear"),
+        "formation_confidence": 0.0,
+        "team_shape": labels.get("team_shape", "Unknown"),
+        "team_shape_confidence": 0.0,
+        "attacking_structure": labels.get("attacking_structure", "Unknown"),
+        "attacking_structure_confidence": 0.0,
+        "defensive_block": labels.get("defensive_block", "Unknown"),
+        "defensive_block_confidence": 0.0,
+        "defensive_shape": labels.get("defensive_shape", "Unknown"),
+        "defensive_shape_confidence": 0.0,
+        "support_context": context.get("support_context", "Support context unavailable."),
+        "opposition_effect": context.get("opposition_effect", "Opposition effect unavailable."),
+        "graph_metadata": {
+            "num_nodes": freeze_frame_player_count(freeze_frame_data),
+            "num_edges": 0,
+            "normalization_applied": True,
+            "missing_features": [],
+        },
+    }
+
+
+def _normalize_prediction_for_commentary(prediction):
+    normalized = dict(prediction or {})
+    formation = normalized.get("formation_approx") or normalized.get("formation") or "Unclear"
+    normalized["formation"] = formation
+    normalized["formation_approx"] = formation
+    normalized.setdefault("team_shape", "Unknown")
+    normalized.setdefault("attacking_structure", "Unknown")
+    normalized.setdefault("defensive_block", "Unknown")
+    normalized.setdefault("defensive_shape", "Unknown")
+    normalized.setdefault("support_context", "Support context unavailable.")
+    normalized.setdefault("opposition_effect", "Opposition effect unavailable.")
+    normalized.setdefault(
+        "graph_metadata",
+        {"num_nodes": 0, "num_edges": 0, "normalization_applied": False, "missing_features": []},
+    )
+    return normalized
+
+
+def get_tactical_analysis(event_data, freeze_frame_data, prefer_gnn=True, model_path=None, config=None):
+    runtime_config = config or config_from_settings()
+    if not prefer_gnn or not runtime_config.enabled:
+        return _normalize_prediction_for_commentary(_heuristic_tactical_prediction(event_data, freeze_frame_data))
+
+    prediction = predict_tactical_snapshot(
+        event_data,
+        freeze_frame_data,
+        model_path=model_path,
+        config=runtime_config,
+        heuristic_fallback=_heuristic_tactical_prediction if runtime_config.use_heuristic_fallback else None,
+    )
+    normalized_prediction = _normalize_prediction_for_commentary(prediction)
+
+    if normalized_prediction.get("model_used") == "gnn":
+        context = compute_support_and_opposition_context(event_data, freeze_frame_data)
+        normalized_prediction["support_context"] = context.get("support_context", normalized_prediction["support_context"])
+        normalized_prediction["opposition_effect"] = context.get("opposition_effect", normalized_prediction["opposition_effect"])
+    return normalized_prediction
+
+
 def compose_tactical_description(team, player, sequence_summary,
                                   gnn_pred, opposition_effect,
                                   support_context):
@@ -790,24 +839,59 @@ def compose_tactical_description(team, player, sequence_summary,
     team = team or "The attacking side"
     player = player or "The player"
 
-    team_shape      = gnn_pred["team_shape"]
-    formation_approx = gnn_pred["formation_approx"]
-    attacking_structure = gnn_pred["attacking_structure"]
-    defensive_shape = gnn_pred["defensive_shape"]
+    team_shape = gnn_pred.get("team_shape", "Unknown")
+    formation_approx = gnn_pred.get("formation_approx", gnn_pred.get("formation", "Unclear"))
+    attacking_structure = gnn_pred.get("attacking_structure", "Unknown")
+    defensive_shape = gnn_pred.get("defensive_shape", "Unknown")
+
+    def _lowered(value):
+        return str(value or "").strip().lower()
+
+    def _article_for(text):
+        return "an" if text[:1] in {"a", "e", "i", "o", "u"} else "a"
+
+    def _formation_phrase(value):
+        lowered = _lowered(value)
+        if lowered in {"", "unknown", "unclear"}:
+            return "without a clearly defined base shape"
+        return f"in {_article_for(lowered)} {lowered}"
+
+    def _attacking_phrase(value):
+        mapping = {
+            "wide structure": "using width in the attack",
+            "central overload": "through a central overload",
+            "vertical support structure": "through vertical support",
+            "balanced structure": "through a balanced attacking pattern",
+        }
+        lowered = _lowered(value)
+        if lowered in {"", "unknown", "unclear"}:
+            return "without a clearly defined attacking pattern"
+        return mapping.get(lowered, f"through {_article_for(lowered)} {lowered}")
+
+    def _shape_phrase(value):
+        lowered = _lowered(value)
+        if lowered in {"", "unknown", "unclear"}:
+            return "an unclear overall shape"
+        return f"{_article_for(lowered)} {lowered}"
+
+    def _defensive_phrase(value):
+        lowered = _lowered(value)
+        if lowered in {"", "unknown", "unclear"}:
+            return "with an unclear defensive shape"
+        return f"in {_article_for(lowered)} {lowered}"
 
     sentences = []
 
     if sequence_summary:
         sentences.append(sequence_summary)
 
-    sentences.append(
-        f"{team} are set in a {formation_approx.lower()} with a "
-        f"{attacking_structure.lower()} and a {team_shape.lower()}."
-    )
+    formation_phrase = _formation_phrase(formation_approx)
+    attacking_phrase = _attacking_phrase(attacking_structure)
+    team_shape_phrase = _shape_phrase(team_shape)
+    defensive_phrase = _defensive_phrase(defensive_shape)
 
-    sentences.append(
-        f"The opposition defend in a {defensive_shape.lower()}."
-    )
+    sentences.append(f"{team} are set {formation_phrase}, {attacking_phrase}, and keep {team_shape_phrase}.")
+    sentences.append(f"The opposition defend {defensive_phrase}.")
 
     if opposition_effect:
         sentences.append(opposition_effect)
@@ -841,6 +925,13 @@ def formation_approx_to_phrase(formation_approx):
         "Back Five Approx": "back-five base",
         "Back Four Approx": "back-four base",
         "Back Three Approx": "back-three base",
+        "4-3-3": "4-3-3 shape",
+        "4-4-2": "4-4-2 shape",
+        "4-2-3-1": "4-2-3-1 shape",
+        "3-5-2": "3-5-2 shape",
+        "3-4-3": "3-4-3 shape",
+        "5-3-2": "5-3-2 shape",
+        "4-1-4-1": "4-1-4-1 shape",
         "Unclear": "fluid base",
     }
     return mapping.get(formation_approx, str(formation_approx).lower())
@@ -856,31 +947,12 @@ def attacking_structure_to_formation(attacking_structure):
     return mapping.get(attacking_structure, str(attacking_structure).lower())
 
 
-def build_spatial_commentary_fallback(level, tactical_labels, team_name=None):
-    team_name = team_name or "The possession side"
-    team_shape = tactical_labels.get("team_shape", "Unknown")
-    formation = tactical_labels.get("formation_approx", "Unclear")
-    attacking_structure = tactical_labels.get("attacking_structure", "Unknown")
-    defensive_shape = tactical_labels.get("defensive_shape", "Unknown")
-    formation_phrase = formation_approx_to_phrase(formation)
-    attacking_formation = attacking_structure_to_formation(attacking_structure)
-
-    if level == "Beginner":
-        return (
-            f"{team_name} hold a {team_shape.lower()} here. "
-            f"They look set in a {formation_phrase}, attacking in a {attacking_formation}. "
-            f"The opposition are organized in a {defensive_shape.lower()}."
-        )
-    if level == "Intermediate":
-        return (
-            f"{team_name} are in a {team_shape.lower()} with a {formation_phrase}. "
-            f"They attack through a {attacking_formation}, while the opposition keep a "
-            f"{defensive_shape.lower()}."
-        )
-    return (
-        f"{team_name} show a {formation_phrase} and a {team_shape.lower()} in this slower phase. "
-        f"Their attack takes a {attacking_formation}, and the out-of-possession unit hold a "
-        f"{defensive_shape.lower()} to protect central access."
+def build_spatial_commentary_fallback(level, tactical_labels, team_name=None, audience_profile=None):
+    profile = resolve_audience_profile(level=level, profile=audience_profile)
+    return build_adaptive_commentary_fallback(
+        team_name=team_name,
+        tactical_labels=tactical_labels,
+        audience_profile=profile,
     )
 
 
@@ -891,19 +963,25 @@ def generate_commentary_ollama(
     tactical_labels=None,
     team_name=None,
     analytics_context=None,
+    audience_profile=None,
 ):
     """Call the Ollama API and return the generated commentary."""
     is_spatial_snapshot = str(selection_reason).startswith("spatial_")
     tactical_labels = tactical_labels or {}
-    
+    resolved_profile = resolve_audience_profile(level=level, profile=audience_profile)
+    adaptation_policy = build_adaptation_policy(resolved_profile)
+    adaptation_instructions = build_llm_adaptation_instructions(resolved_profile, adaptation_policy)
+
     metric_str = f"Metric Context:\n{analytics_context}" if analytics_context else "Metric Context: Stats are not available for this action."
 
     if is_spatial_snapshot:
         user_content = (
-            f"Level: {level}\n\n"
+            f"Level: {resolved_profile.level}\n\n"
             "Task: Generate commentary for a tactical freeze-frame.\n"
             "Focus only on spatial/team-structure interpretation from this snapshot.\n"
             "Do not invent unrelated actions, players, or outcomes.\n\n"
+            "Audience adaptation requirements:\n"
+            f"{adaptation_instructions}\n\n"
             f"Possession Team: {team_name or 'The possession side'}\n"
             "Use the possession team name directly in the commentary.\n"
             "Avoid meta phrases like 'this freeze-frame' or 'this snapshot'.\n"
@@ -918,7 +996,9 @@ def generate_commentary_ollama(
         )
     else:
         user_content = (
-            f"Level: {level}\n\n"
+            f"Level: {resolved_profile.level}\n\n"
+            "Audience adaptation requirements:\n"
+            f"{adaptation_instructions}\n\n"
             f"Tactical Description: {tactical_desc}\n\n"
             f"{metric_str}"
         )
@@ -938,15 +1018,30 @@ def generate_commentary_ollama(
         data = resp.json()
         commentary = data.get("message", {}).get("content", "").strip()
         if is_spatial_snapshot and not spatial_commentary_has_required_points(commentary, tactical_labels):
-            return build_spatial_commentary_fallback(level, tactical_labels, team_name=team_name)
+            return build_spatial_commentary_fallback(
+                resolved_profile.level,
+                tactical_labels,
+                team_name=team_name,
+                audience_profile=resolved_profile,
+            )
         return commentary
     except requests.exceptions.ConnectionError:
         if is_spatial_snapshot:
-            return build_spatial_commentary_fallback(level, tactical_labels, team_name=team_name)
+            return build_spatial_commentary_fallback(
+                resolved_profile.level,
+                tactical_labels,
+                team_name=team_name,
+                audience_profile=resolved_profile,
+            )
         return "[ERROR] Could not connect to Ollama. Is it running? (ollama serve)"
     except Exception as e:
         if is_spatial_snapshot:
-            return build_spatial_commentary_fallback(level, tactical_labels, team_name=team_name)
+            return build_spatial_commentary_fallback(
+                resolved_profile.level,
+                tactical_labels,
+                team_name=team_name,
+                audience_profile=resolved_profile,
+            )
         return f"[ERROR] {e}"
 
 
@@ -1038,8 +1133,7 @@ def process_event(
     norm_focus_360 = normalize_freeze_frame(focus_360, attacking_right)
 
     # ΓöÇΓöÇ Heuristic tactical labels ΓöÇΓöÇ
-    labels = analyze_tactical_snapshot(norm_focus_event, norm_focus_360)
-    ctx = compute_support_and_opposition_context(norm_focus_event, norm_focus_360)
+    labels = get_tactical_analysis(norm_focus_event, norm_focus_360)
 
     # ΓöÇΓöÇ Sequence summary ΓöÇΓöÇ
     seq_summary = summarize_sequence(event_sequence, focus_idx)
@@ -1050,8 +1144,8 @@ def process_event(
         player=player,
         sequence_summary=seq_summary,
         gnn_pred=labels,
-        opposition_effect=ctx["opposition_effect"],
-        support_context=ctx["support_context"],
+        opposition_effect=labels.get("opposition_effect"),
+        support_context=labels.get("support_context"),
     )
 
     print(f"\n  Tactical Description:\n  {tactical_desc}\n")

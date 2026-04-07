@@ -44,6 +44,10 @@ async def lifespan(_: FastAPI):
 
 
 def create_app() -> FastAPI:
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    os.makedirs(settings.COMMENTARY_DIR, exist_ok=True)
+    os.makedirs(settings.HF_CACHE_DIR, exist_ok=True)
+
     app = FastAPI(
         title="Football Analysis Platform",
         description="Merged tracking, analytics, and frontend backend for football analysis.",

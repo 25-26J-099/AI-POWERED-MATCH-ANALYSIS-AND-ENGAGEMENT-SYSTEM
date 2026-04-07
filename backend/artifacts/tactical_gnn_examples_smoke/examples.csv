@@ -1,0 +1,3 @@
+event_id,event_type,category,used_fallback,gnn_formation,heuristic_formation,final_formation,disagreement_heads
+repo-evt-1,Pass,disagreement,False,Unclear,Back Five Approx,Unclear,"formation_approx,team_shape,attacking_structure,defensive_block,defensive_shape"
+repo-evt-2,Carry,disagreement,False,Unclear,Back Five Approx,Unclear,"formation_approx,team_shape,attacking_structure,defensive_block,defensive_shape"

@@ -126,7 +126,7 @@ def is_high_action_pbp_priority_event(event):
     return False
 
 
-def build_tactical_timeline(events, threesixty_lookup, level, base_ts, analytics_context=None):
+def build_tactical_timeline(events, threesixty_lookup, level, base_ts, analytics_context=None, audience_profile=None):
     """
     Run the tactical pipeline and produce a list of commentary entries.
     Each entry: {video_ts, commentator, text, event_id, selection_reason}
@@ -168,6 +168,7 @@ def build_tactical_timeline(events, threesixty_lookup, level, base_ts, analytics
             tactical_labels=result.get("tactical_labels"),
             team_name=result.get("team"),
             analytics_context=analytics_context,
+            audience_profile=audience_profile,
         )
         print(f"    Done ({len(commentary)} chars)")
 
@@ -623,7 +624,16 @@ def play_video_vlc(video_path, parent_window=None):
 # MAIN PIPELINE (called from GUI)
 # ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
-def run_pipeline(events, threesixty_lookup, video_file, level, analytics_context=None, progress_callback=None, done_callback=None):
+def run_pipeline(
+    events,
+    threesixty_lookup,
+    video_file,
+    level,
+    analytics_context=None,
+    progress_callback=None,
+    done_callback=None,
+    audience_profile=None,
+):
     """
     Full pipeline: load → generate both commentaries → merge → TTS → compose video.
     Runs in a background thread or executor.
@@ -649,7 +659,14 @@ def run_pipeline(events, threesixty_lookup, video_file, level, analytics_context
         # ΓöÇΓöÇ Generate both commentary timelines ΓöÇΓöÇ
         if progress_callback:
             progress_callback("Generating tactical commentary...")
-        tac_entries = build_tactical_timeline(events, threesixty_lookup, level, base_ts, analytics_context)
+        tac_entries = build_tactical_timeline(
+            events,
+            threesixty_lookup,
+            level,
+            base_ts,
+            analytics_context,
+            audience_profile=audience_profile,
+        )
 
         if progress_callback:
             progress_callback("Generating play-by-play commentary...")

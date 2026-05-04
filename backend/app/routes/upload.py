@@ -53,7 +53,10 @@ async def upload_video(
     match = Match(
         video_path=str(video_path),
         tracking_job_id=job.job_id,
-        tracking_artifacts={"commentary_level": commentary_level},
+        tracking_artifacts={
+            "commentary_level": commentary_level,
+            "original_filename": filename,
+        },
         status="lineup_pending",
         status_detail="Video uploaded. Waiting for lineup setup...",
     )

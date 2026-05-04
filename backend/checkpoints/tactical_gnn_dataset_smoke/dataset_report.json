@@ -1,0 +1,74 @@
+{
+  "input_path": "E:\\Y4S2\\Research\\AI-POWERED-MATCH-ANALYSIS-AND-ENGAGEMENT-SYSTEM-Dev2-PP2-Sachintha_2\\backend\\data\\tactical_gnn\\gnn_synthetic_augmented.jsonl",
+  "source_files": [
+    "E:\\Y4S2\\Research\\AI-POWERED-MATCH-ANALYSIS-AND-ENGAGEMENT-SYSTEM-Dev2-PP2-Sachintha_2\\backend\\data\\tactical_gnn\\gnn_synthetic_augmented.jsonl"
+  ],
+  "detected_formats": [
+    "generic"
+  ],
+  "total_records": 1855,
+  "usable_samples": 1855,
+  "dropped_samples": 0,
+  "dropped_reasons": {},
+  "label_counts": {
+    "formation": {
+      "4-3-3": 315,
+      "4-2-3-1": 270,
+      "3-4-3": 265,
+      "4-4-2": 300,
+      "Unclear": 160,
+      "3-5-2": 200,
+      "5-3-2": 175,
+      "4-1-4-1": 170
+    },
+    "team_shape": {
+      "Balanced Shape": 405,
+      "Vertical Shape": 265,
+      "Stretched Shape": 215,
+      "Compact Shape": 545,
+      "Wide Shape": 425
+    },
+    "attacking_structure": {
+      "Balanced Structure": 710,
+      "Vertical Support Structure": 495,
+      "Wide Structure": 280,
+      "Central Overload": 370
+    },
+    "defensive_block": {
+      "Mid Block": 775,
+      "High Press": 445,
+      "Low Block": 635
+    },
+    "defensive_shape": {
+      "Compact Balanced": 745,
+      "Spread Wide": 460,
+      "Unknown": 305,
+      "Compact Narrow": 345
+    }
+  },
+  "label_source_counts": {
+    "formation": {
+      "synthetic_expert_rule": 1855
+    },
+    "team_shape": {
+      "synthetic_expert_rule": 1855
+    },
+    "attacking_structure": {
+      "synthetic_expert_rule": 1855
+    },
+    "defensive_block": {
+      "synthetic_expert_rule": 1855
+    },
+    "defensive_shape": {
+      "synthetic_expert_rule": 1855
+    }
+  },
+  "active_heads": [
+    "formation",
+    "team_shape",
+    "attacking_structure",
+    "defensive_block",
+    "defensive_shape"
+  ],
+  "schema_notes": []
+}

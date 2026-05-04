@@ -1,0 +1,11 @@
+event_id,event_type,category,used_fallback,gnn_formation,heuristic_formation,final_formation,disagreement_heads
+batch_01_evt-001,Pass,disagreement,False,4-3-3,Back Five Approx,4-3-3,"formation_approx,team_shape,defensive_block,defensive_shape"
+batch_01_evt-002,Through Ball,disagreement,False,Unclear,Back Five Approx,Unclear,"formation_approx,team_shape,attacking_structure,defensive_shape"
+batch_01_evt-003,Carry,disagreement,False,Unclear,Unclear,Unclear,"team_shape,attacking_structure,defensive_shape"
+batch_01_evt-004,Shot,disagreement,False,4-4-2,Unclear,4-4-2,"formation_approx,attacking_structure"
+batch_01_evt-005,Interception,disagreement,False,Unclear,Unclear,Unclear,"attacking_structure,defensive_block,defensive_shape"
+batch_01_evt-006,Ball Recovery,disagreement,False,Unclear,Back Five Approx,Unclear,"formation_approx,team_shape,attacking_structure,defensive_block,defensive_shape"
+batch_01_evt-007,Pressure,disagreement,False,Unclear,Back Five Approx,Unclear,"formation_approx,team_shape,defensive_block,defensive_shape"
+batch_01_evt-008,Clearance,disagreement,False,5-3-2,Back Five Approx,5-3-2,"formation_approx,defensive_block,defensive_shape"
+batch_01_evt-009,Block,disagreement,False,5-3-2,Back Five Approx,5-3-2,"formation_approx,defensive_block,defensive_shape"
+batch_01_evt-010,Cross,disagreement,False,3-4-3,Unclear,3-4-3,formation_approx

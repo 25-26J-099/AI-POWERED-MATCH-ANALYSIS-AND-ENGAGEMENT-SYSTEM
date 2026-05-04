@@ -1,0 +1,92 @@
+{
+  "Beginner": {
+    "profile": {
+      "level": "Beginner",
+      "verbosity": "medium",
+      "educational_mode": false,
+      "style": "neutral",
+      "source": "explicit"
+    },
+    "policy": {
+      "level": "Beginner",
+      "verbosity": "medium",
+      "max_sentences": 3,
+      "target_sentence_style": "short and clear",
+      "tactical_depth": "light",
+      "assume_knowledge": "low",
+      "explain_terms": true,
+      "include_educational_hints": true,
+      "allow_dense_jargon": false,
+      "concise_analytical_phrasing": false,
+      "include_extra_context": true
+    },
+    "text": "Event type: Pass Blue FC are set in a 4-3-3, with support on both sides of the ball, and keep a balanced shape. In simple terms, that means the team keeps support on both sides of the ball. The opposition defend in a compact balanced mid block. The opposition shape protects the central lane and slows central progression.",
+    "metrics": {
+      "word_count": 58,
+      "sentence_count": 4,
+      "avg_sentence_length": 14.5,
+      "jargon_count": 5,
+      "explanation_count": 2
+    }
+  },
+  "Intermediate": {
+    "profile": {
+      "level": "Intermediate",
+      "verbosity": "medium",
+      "educational_mode": false,
+      "style": "neutral",
+      "source": "explicit"
+    },
+    "policy": {
+      "level": "Intermediate",
+      "verbosity": "medium",
+      "max_sentences": 3,
+      "target_sentence_style": "balanced",
+      "tactical_depth": "medium",
+      "assume_knowledge": "moderate",
+      "explain_terms": false,
+      "include_educational_hints": false,
+      "allow_dense_jargon": false,
+      "concise_analytical_phrasing": false,
+      "include_extra_context": true
+    },
+    "text": "Event type: Pass Blue FC are set in a 4-3-3, through a balanced attacking pattern, and keep a balanced shape. The opposition defend in a compact balanced mid block. The opposition shape protects the central lane and slows central progression. There is immediate support around the ball and a wider outlet is available.",
+    "metrics": {
+      "word_count": 53,
+      "sentence_count": 4,
+      "avg_sentence_length": 13.25,
+      "jargon_count": 5,
+      "explanation_count": 0
+    }
+  },
+  "Expert": {
+    "profile": {
+      "level": "Expert",
+      "verbosity": "medium",
+      "educational_mode": false,
+      "style": "neutral",
+      "source": "explicit"
+    },
+    "policy": {
+      "level": "Expert",
+      "verbosity": "medium",
+      "max_sentences": 3,
+      "target_sentence_style": "compact and analytical",
+      "tactical_depth": "high",
+      "assume_knowledge": "high",
+      "explain_terms": false,
+      "include_educational_hints": false,
+      "allow_dense_jargon": true,
+      "concise_analytical_phrasing": true,
+      "include_extra_context": true
+    },
+    "text": "Event type: Pass Blue FC settle in a 4-3-3, through a balanced attacking pattern, and maintain a balanced shape. The opposition defend in a compact balanced mid block. The opposition shape protects the central lane and slows central progression. There is immediate support around the ball and a wider outlet is available.",
+    "metrics": {
+      "word_count": 52,
+      "sentence_count": 4,
+      "avg_sentence_length": 13.0,
+      "jargon_count": 5,
+      "explanation_count": 0
+    }
+  }
+}

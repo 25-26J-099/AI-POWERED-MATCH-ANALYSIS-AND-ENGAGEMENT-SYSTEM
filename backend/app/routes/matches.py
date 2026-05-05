@@ -121,6 +121,7 @@ async def get_match(match_id: int, db: AsyncSession = Depends(get_db)):
         "commentary_video_path": match.commentary_video_path,
         "tracking_job_id": match.tracking_job_id,
         "tracking_artifacts": tracking_artifacts,
+        "team_colors": tracking_artifacts.get("team_colors", []),
         "commentary_level": tracking_artifacts.get("commentary_level"),
         "status": match.status,
         "status_detail": match.status_detail,
@@ -145,6 +146,7 @@ async def get_match_status(match_id: int, db: AsyncSession = Depends(get_db)):
         "job_id": match.tracking_job_id,
         "status": match.status,
         "status_detail": match.status_detail,
+        "team_colors": (match.tracking_artifacts or {}).get("team_colors", []),
         "tracking_job_status": tracking_job_status,
         "tracking_job_error": tracking_job_error,
     }

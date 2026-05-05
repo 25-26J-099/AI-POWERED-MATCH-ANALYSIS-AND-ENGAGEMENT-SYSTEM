@@ -47,6 +47,10 @@ class MatchDataExporter:
             **metadata,
         }
 
+    def update_metadata(self, metadata: dict):
+        """Merge additional metadata discovered during processing."""
+        self.match_metadata.update(metadata)
+
     def add_event(self, event: dict):
         """Add a detected event (v4: with freeze frame support)."""
         self.events.append(event)

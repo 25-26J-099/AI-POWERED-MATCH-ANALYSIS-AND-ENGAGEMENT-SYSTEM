@@ -27,22 +27,44 @@ export default function MatchDashboard() {
 
     const hs = analytics?.home_team_stats || {};
     const as = analytics?.away_team_stats || {};
+    const teamColors = Array.isArray(match.team_colors) ? match.team_colors : [];
+    const colorForTeam = (name: string | null | undefined, fallbackIndex: number) =>
+        teamColors.find((team: any) => team.team_name === name) || teamColors[fallbackIndex];
+    const homeColor = colorForTeam(match.home_team, 0);
+    const awayColor = colorForTeam(match.away_team, 1);
+
+    const TeamHeader = ({ name, fallback, color }: { name: string | null, fallback: string, color?: any }) => (
+        <div>
+            <h2 style={{ fontSize: '1.8rem', fontWeight: 800 }}>{name || fallback}</h2>
+            {color && (
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginTop: '8px', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                    <span
+                        aria-hidden="true"
+                        style={{
+                            width: '18px',
+                            height: '18px',
+                            borderRadius: '50%',
+                            background: color.hex,
+                            border: '2px solid rgba(255,255,255,0.65)',
+                        }}
+                    />
+                    {color.color_name}
+                </div>
+            )}
+        </div>
+    );
 
     return (
         <div className="page-container">
             {/* Header */}
             <div className="glass-card" style={{ textAlign: 'center', marginBottom: '32px', padding: '40px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '48px' }}>
-                    <div>
-                        <h2 style={{ fontSize: '1.8rem', fontWeight: 800 }}>{match.home_team || 'Home'}</h2>
-                    </div>
+                    <TeamHeader name={match.home_team} fallback="Home" color={homeColor} />
                     <div style={{
                         fontSize: '1rem', color: 'var(--text-muted)', fontWeight: 600,
                         padding: '12px 24px', borderRadius: '12px', background: 'var(--bg-secondary)',
                     }}>VS</div>
-                    <div>
-                        <h2 style={{ fontSize: '1.8rem', fontWeight: 800 }}>{match.away_team || 'Away'}</h2>
-                    </div>
+                    <TeamHeader name={match.away_team} fallback="Away" color={awayColor} />
                 </div>
                 <div style={{ marginTop: '16px', display: 'flex', gap: '12px', justifyContent: 'center' }}>
                     <Link to={`/match/${matchId}/compare`}><button className="btn-secondary">Compare Players</button></Link>

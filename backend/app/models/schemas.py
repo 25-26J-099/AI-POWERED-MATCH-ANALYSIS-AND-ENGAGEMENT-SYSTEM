@@ -27,6 +27,7 @@ class AnalysisOptions(BaseModel):
     ml_model_path: Optional[str] = None
     ml_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
     ml_device: DeviceLiteral = "auto"
+    team_names: Optional[Dict[int, str]] = None
 
 
 class AnalyzePathRequest(AnalysisOptions):
@@ -68,6 +69,7 @@ class AnalysisResultResponse(BaseModel):
     event_summary: Dict[str, int]
     possession: List[float]
     ml_detector_used: bool
+    team_colors: List[Dict[str, Any]] = Field(default_factory=list)
     artifacts: Dict[str, str]
 
 

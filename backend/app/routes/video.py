@@ -43,6 +43,7 @@ def _to_options(payload: AnalyzePathRequest) -> AnalysisRequestOptions:
         ml_model_path=payload.ml_model_path,
         ml_confidence=payload.ml_confidence,
         ml_device=payload.ml_device,
+        team_names=payload.team_names,
     )
 
 
@@ -133,6 +134,7 @@ async def analyze_video_upload(
         ml_model_path=payload.ml_model_path,
         ml_confidence=payload.ml_confidence,
         ml_device=payload.ml_device,
+        team_names=payload.team_names,
     )
 
     upload_dir = Path(settings.UPLOAD_DIR) / "api_uploads"
@@ -228,6 +230,7 @@ def get_job_result(
         event_summary={k: int(v) for k, v in result.get("event_summary", {}).items()},
         possession=[float(v) for v in result.get("possession", [50.0, 50.0])],
         ml_detector_used=bool(result.get("ml_detector_used", False)),
+        team_colors=list(result.get("team_colors", [])),
         artifacts=artifact_urls,
     )
 

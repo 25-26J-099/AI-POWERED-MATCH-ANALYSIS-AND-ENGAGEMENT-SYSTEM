@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.config.settings import settings
 from app.database.database import async_session
@@ -35,6 +36,35 @@ async def _update_match(match_id: int, **updates: Any) -> None:
         await session.commit()
 
 
+async def _load_team_names(match_id: int) -> dict[int, str]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(Match)
+            .options(selectinload(Match.home_team), selectinload(Match.away_team))
+            .where(Match.id == match_id)
+        )
+        match = result.scalar_one_or_none()
+        if match is None:
+            return {}
+        team_names: dict[int, str] = {}
+        if match.home_team and match.home_team.name:
+            team_names[0] = match.home_team.name
+        if match.away_team and match.away_team.name:
+            team_names[1] = match.away_team.name
+        artifacts = match.tracking_artifacts or {}
+        stored_map = artifacts.get("team_name_map") or {}
+        if isinstance(stored_map, dict):
+            for key, value in stored_map.items():
+                try:
+                    team_id = int(key)
+                except (TypeError, ValueError):
+                    continue
+                clean_name = str(value or "").strip()
+                if clean_name:
+                    team_names[team_id] = clean_name
+        return team_names
+
+
 def _load_statsbomb_events(statsbomb_path: str | Path) -> list[dict]:
     path = Path(statsbomb_path)
     with path.open("r", encoding="utf-8") as infile:
@@ -56,10 +86,14 @@ async def process_match_video(
 ) -> None:
     """Run the merged pipeline for a match from upload through analytics."""
     job_service = get_job_service()
+    team_names = await _load_team_names(match_id)
     resolved_options = options or AnalysisRequestOptions(
         enable_ml_detector=True,
         ml_model_path=settings.HF_EVENT_DETECTOR_WEIGHTS_FILE,
+        team_names=team_names,
     )
+    if options is not None and not options.team_names:
+        options.team_names = team_names
     logger.info("Merged pipeline starting for match_id=%s tracking_job_id=%s", match_id, tracking_job_id)
 
     await _update_match(
@@ -120,6 +154,11 @@ async def monitor_tracking_job(match_id: int, tracking_job_id: str) -> None:
 
     record = job_service.get_job(tracking_job_id)
     artifact_paths = dict(record.artifact_paths)
+    tracking_artifacts = dict(artifact_paths)
+    if record.result.get("team_colors") is not None:
+        tracking_artifacts["team_colors"] = record.result.get("team_colors", [])
+    if record.result.get("team_names") is not None:
+        tracking_artifacts["team_names"] = record.result.get("team_names", {})
     statsbomb_path = artifact_paths.get("statsbomb_json") or artifact_paths.get("json")
     logger.info(
         "Tracking job completed for match_id=%s tracking_job_id=%s statsbomb_path=%s",
@@ -134,7 +173,7 @@ async def monitor_tracking_job(match_id: int, tracking_job_id: str) -> None:
             match_id,
             status="failed",
             status_detail="Tracking completed but no StatsBomb event artifact was produced.",
-            tracking_artifacts=artifact_paths,
+            tracking_artifacts=tracking_artifacts,
         )
         return
 
@@ -150,7 +189,7 @@ async def monitor_tracking_job(match_id: int, tracking_job_id: str) -> None:
             match_id,
             status="analytics_processing",
             status_detail="StatsBomb events received. Launching Component 4 analytics...",
-            tracking_artifacts=artifact_paths,
+            tracking_artifacts=tracking_artifacts,
         )
         await ingest_events(match_id, raw_events)
         logger.info("Event ingestion complete for match_id=%s", match_id)

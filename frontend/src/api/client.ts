@@ -12,15 +12,31 @@ export const buildApiUrl = (path: string) =>
     `${API_BASE.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
 
 // ── Upload ────────────────────────────────────────────────────────────────
+export type UploadCommentaryOptions = {
+    commentaryLevel: 'Auto' | 'Beginner' | 'Intermediate' | 'Expert',
+    commentaryVerbosity?: 'low' | 'medium' | 'high',
+    commentaryStyle?: 'neutral' | 'friendly' | 'analytical' | 'coach',
+    educationalMode?: boolean,
+    footballKnowledge?: '' | 'beginner' | 'intermediate' | 'expert',
+    homeTeamName?: string,
+    awayTeamName?: string,
+};
+
 export const uploadVideo = (
     file: File,
-    commentaryLevel: 'Beginner' | 'Intermediate' | 'Expert',
+    options: UploadCommentaryOptions,
     onProgress?: (pct: number) => void,
 ) =>
     api.post('/upload-video', (() => {
         const f = new FormData();
         f.append('video', file);
-        f.append('commentary_level', commentaryLevel);
+        f.append('commentary_level', options.commentaryLevel);
+        f.append('commentary_verbosity', options.commentaryVerbosity || 'medium');
+        f.append('commentary_style', options.commentaryStyle || 'neutral');
+        f.append('educational_mode', String(Boolean(options.educationalMode)));
+        if (options.footballKnowledge) {
+            f.append('football_knowledge', options.footballKnowledge);
+        }
         return f;
     })(), {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -29,6 +45,12 @@ export const uploadVideo = (
 
 export const submitLineups = (matchId: number, data: any) =>
     api.post(`/match/${matchId}/lineups`, data);
+
+export const detectTeamColors = (matchId: number) =>
+    api.post(`/match/${matchId}/detect-team-colors`);
+
+export const confirmTeamMapping = (matchId: number, teamNames: Record<number, string>) =>
+    api.post(`/match/${matchId}/team-mapping`, { team_names: teamNames });
 
 export const proceedPipeline = (matchId: number) =>
     api.post(`/match/${matchId}/proceed`);

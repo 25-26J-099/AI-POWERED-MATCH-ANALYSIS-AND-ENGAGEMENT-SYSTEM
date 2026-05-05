@@ -96,6 +96,34 @@ class Settings(BaseSettings):
     COMMENTARY_VERBOSITY: str = Field(default="medium", description="Default commentary verbosity: low, medium, or high")
     COMMENTARY_EDUCATIONAL_MODE: bool = Field(default=False, description="Default educational mode for commentary")
     COMMENTARY_STYLE: str = Field(default="neutral", description="Default commentary tone/style")
+    COMMENTARY_AUDIENCE_MODEL_PATH: str = Field(
+        default="./app/commentary/audience_model.json",
+        description="Path to the learned audience-model bundle used for automatic commentary-level inference",
+    )
+    COMMENTARY_AUDIENCE_MODEL_MIN_CONFIDENCE: float = Field(
+        default=0.5,
+        description="Minimum confidence required before accepting a learned audience-model prediction",
+    )
+    ENTERPRISE_API_KEY: Optional[str] = Field(
+        default=None,
+        description="Optional shared API key for protected enterprise endpoints",
+    )
+    ENTERPRISE_ENFORCE_API_KEY: bool = Field(
+        default=False,
+        description="Require the enterprise API key on protected AI-heavy endpoints",
+    )
+    RATE_LIMIT_REQUESTS: int = Field(
+        default=120,
+        description="Requests allowed per client within the rolling rate-limit window",
+    )
+    RATE_LIMIT_WINDOW_SECONDS: int = Field(
+        default=60,
+        description="Rolling rate-limit window size in seconds",
+    )
+    SECURITY_ENABLE_HEADERS: bool = Field(
+        default=True,
+        description="Enable baseline enterprise security headers",
+    )
 
     # ── CORS ──────────────────────────────────────────────────────────────
     CORS_ORIGINS: list[str] = Field(default=["http://localhost:5173", "http://localhost:3000"])

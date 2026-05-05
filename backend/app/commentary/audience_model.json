@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "model_type": "multinomial_logistic_regression",
+  "feature_names": [
+    "educational_mode",
+    "verbosity_low",
+    "verbosity_medium",
+    "verbosity_high",
+    "style_neutral",
+    "style_friendly",
+    "style_analytical",
+    "style_coach",
+    "knowledge_low",
+    "knowledge_moderate",
+    "knowledge_high",
+    "knowledge_unknown"
+  ],
+  "classes": [
+    "Beginner",
+    "Expert",
+    "Intermediate"
+  ],
+  "coefficients": [
+    [
+      7.879713934647484,
+      -0.7627358451719094,
+      -0.7324776264704563,
+      1.2743312492538772,
+      0.426399007210697,
+      1.3659566502171945,
+      -1.0732796022622786,
+      -0.9399582775540971,
+      2.689072792564008,
+      -0.4660887971675091,
+      -1.696674202782839,
+      -0.7471920150021315
+    ],
+    [
+      -6.704676092329415,
+      1.0370668061389594,
+      1.0187316207865522,
+      -1.6383118701543034,
+      -1.5644078809301445,
+      -1.4205720743644934,
+      1.7308255719044137,
+      1.6716409401614358,
+      -0.8450201551863821,
+      -1.271546139841769,
+      3.7316067785931413,
+      -1.1975539267937843
+    ],
+    [
+      -1.1750378423180665,
+      -0.27433096096703596,
+      -0.2862539943160994,
+      0.36398062090043165,
+      1.138008873719451,
+      0.05461542414730332,
+      -0.6575459696421337,
+      -0.7316826626073277,
+      -1.8440526373776231,
+      1.7376349370092747,
+      -2.0349325758102808,
+      1.9447459417959236
+    ]
+  ],
+  "intercepts": [
+    -0.49947628215322326,
+    1.0450290144062104,
+    -0.5455527322529958
+  ],
+  "min_confidence": 0.5,
+  "metadata": {
+    "seed": 42,
+    "training_metrics": {
+      "training_accuracy": 0.9973,
+      "sample_count": 2240,
+      "class_report": {
+        "Beginner": {
+          "precision": 1.0,
+          "recall": 0.9962145110410094,
+          "f1-score": 0.9981036662452591,
+          "support": 1585.0
+        },
+        "Expert": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1-score": 1.0,
+          "support": 531.0
+        },
+        "Intermediate": {
+          "precision": 0.9538461538461539,
+          "recall": 1.0,
+          "f1-score": 0.9763779527559056,
+          "support": 124.0
+        },
+        "accuracy": 0.9973214285714286,
+        "macro avg": {
+          "precision": 0.9846153846153847,
+          "recall": 0.9987381703470032,
+          "f1-score": 0.9914938730003883,
+          "support": 2240.0
+        },
+        "weighted avg": {
+          "precision": 0.997445054945055,
+          "recall": 0.9973214285714286,
+          "f1-score": 0.9973505255091376,
+          "support": 2240.0
+        }
+      }
+    },
+    "training_source": "synthetic bootstrapped audience-preference samples"
+  }
+}

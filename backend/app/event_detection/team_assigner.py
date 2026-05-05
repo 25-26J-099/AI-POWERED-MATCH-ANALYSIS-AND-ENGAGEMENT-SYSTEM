@@ -11,7 +11,7 @@ v4 fixes from real test results:
 import cv2
 import numpy as np
 import logging
-from typing import Dict, Tuple, Optional, List
+from typing import Dict, Tuple, Optional, List, Any
 from sklearn.cluster import KMeans
 from collections import Counter, defaultdict
 
@@ -234,6 +234,67 @@ class TeamAssigner:
                 min(255, int(r * scale)),
             )
         return colors
+
+    def get_team_color_metadata(self, team_names: Optional[Dict[int, str]] = None) -> List[Dict[str, Any]]:
+        """
+        Return frontend/API-friendly color metadata for each detected team cluster.
+
+        Internal team ids remain zero-based for the tracking pipeline. The display
+        label is one-based because users naturally read the detected clusters as
+        Team 1 and Team 2.
+        """
+        if not self.is_fitted:
+            return []
+
+        team_names = team_names or {}
+        display_colors = self.get_team_display_colors()
+        metadata: List[Dict[str, Any]] = []
+        for team_id in sorted(self.team_colors.keys()):
+            hsv_center = self.team_colors[team_id]
+            bgr = display_colors.get(team_id)
+            if bgr is None:
+                continue
+            b, g, r = [int(v) for v in bgr]
+            rgb = {"r": r, "g": g, "b": b}
+            metadata.append({
+                "team_id": int(team_id),
+                "detected_label": f"Team {int(team_id) + 1}",
+                "team_name": team_names.get(int(team_id)) or f"Team {int(team_id) + 1}",
+                "color_name": self._name_from_hsv(hsv_center),
+                "hex": f"#{r:02X}{g:02X}{b:02X}",
+                "rgb": rgb,
+                "bgr": {"b": b, "g": g, "r": r},
+                "hsv": {
+                    "h": round(float(hsv_center[0]), 2),
+                    "s": round(float(hsv_center[1]), 2),
+                    "v": round(float(hsv_center[2]), 2),
+                },
+            })
+        return metadata
+
+    @staticmethod
+    def _name_from_hsv(hsv_center: np.ndarray) -> str:
+        h, s, v = [float(x) for x in hsv_center]
+        if v < 55:
+            return "Black"
+        if s < 35:
+            return "White" if v > 185 else "Gray"
+
+        if h < 8 or h >= 170:
+            return "Red"
+        if h < 24:
+            return "Orange"
+        if h < 35:
+            return "Yellow"
+        if h < 86:
+            return "Green"
+        if h < 100:
+            return "Cyan"
+        if h < 131:
+            return "Blue"
+        if h < 151:
+            return "Purple"
+        return "Pink"
 
     def reset_track(self, track_id: int):
         self._vote_history.pop(track_id, None)

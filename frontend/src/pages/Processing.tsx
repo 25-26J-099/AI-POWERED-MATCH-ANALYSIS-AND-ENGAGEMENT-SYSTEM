@@ -21,6 +21,7 @@ export default function Processing() {
     const [status, setStatus] = useState('uploading');
     const [lastActiveStage, setLastActiveStage] = useState('uploading');
     const [detail, setDetail] = useState('');
+    const [teamColors, setTeamColors] = useState<any[]>([]);
     const [error, setError] = useState(false);
 
     useEffect(() => {
@@ -29,6 +30,9 @@ export default function Processing() {
                 const res = await getMatchStatus(Number(id));
                 setStatus(res.data.status);
                 setDetail(res.data.status_detail || '');
+                if (Array.isArray(res.data.team_colors)) {
+                    setTeamColors(res.data.team_colors);
+                }
                 if (PIPELINE_STAGE_KEYS.has(res.data.status) && res.data.status !== 'completed') {
                     setLastActiveStage(res.data.status);
                 }
@@ -69,6 +73,48 @@ export default function Processing() {
                     <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>Pipeline failed</div>
                     <div style={{ marginTop: '8px', color: 'var(--text-secondary)' }}>
                         {detail || 'The backend reported a failure while processing this match.'}
+                    </div>
+                </div>
+            )}
+
+            {teamColors.length > 0 && (
+                <div className="glass-card" style={{ marginTop: '28px' }}>
+                    <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '14px' }}>Detected Team Colors</h3>
+                    <div style={{ display: 'grid', gap: '12px', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                        {teamColors.map((team) => (
+                            <div
+                                key={team.team_id}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '12px',
+                                    padding: '12px',
+                                    borderRadius: '8px',
+                                    background: 'var(--bg-card)',
+                                    border: '1px solid var(--border-subtle)',
+                                }}
+                            >
+                                <span
+                                    aria-hidden="true"
+                                    style={{
+                                        width: '28px',
+                                        height: '28px',
+                                        borderRadius: '50%',
+                                        background: team.hex,
+                                        border: '2px solid rgba(255,255,255,0.65)',
+                                        flexShrink: 0,
+                                    }}
+                                />
+                                <div>
+                                    <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+                                        {team.team_name || team.detected_label}
+                                    </div>
+                                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                        {team.detected_label} - {team.color_name}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 </div>
             )}

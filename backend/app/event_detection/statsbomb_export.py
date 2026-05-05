@@ -40,6 +40,13 @@ class StatsBombExporter:
         self._last_possession_team: Optional[int] = None
         self._last_player_locations: Dict[int, List[float]] = {}
 
+    def set_team_names(self, team_names: Dict[int, str]) -> None:
+        """Override generic team names with user-provided match names."""
+        for team_id, name in (team_names or {}).items():
+            clean_name = str(name or "").strip()
+            if clean_name:
+                self.team_registry[int(team_id)] = {"name": clean_name}
+
     def set_frame_dimensions(self, frame_width: int, frame_height: int) -> None:
         self.frame_width = max(1, int(frame_width))
         self.frame_height = max(1, int(frame_height))

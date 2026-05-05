@@ -22,7 +22,7 @@ class LineupPlayerInput(BaseModel):
 
 
 class LineupInput(BaseModel):
-    team_name: str
+    team_name: str = Field(..., min_length=1)
     formation: str = Field(..., pattern=r"^\d-\d(-\d){1,3}$", description="e.g. '4-3-3', '4-4-2', '3-5-2'")
     players: List[LineupPlayerInput] = Field(..., min_length=11, max_length=11)
 
@@ -69,11 +69,17 @@ async def submit_lineups(
             ))
         return lineup
 
-    home_team = await upsert_team(body.home_team.team_name)
-    away_team = await upsert_team(body.away_team.team_name)
+    home_team = await upsert_team(body.home_team.team_name.strip())
+    away_team = await upsert_team(body.away_team.team_name.strip())
 
     match.home_team_id = home_team.id
     match.away_team_id = away_team.id
+    artifacts = dict(match.tracking_artifacts or {})
+    artifacts["team_name_map"] = {
+        0: home_team.name,
+        1: away_team.name,
+    }
+    match.tracking_artifacts = artifacts
 
     home_lineup = await create_lineup(home_team, body.home_team)
     away_lineup = await create_lineup(away_team, body.away_team)

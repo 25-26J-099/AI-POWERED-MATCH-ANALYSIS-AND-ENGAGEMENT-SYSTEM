@@ -33,6 +33,7 @@ class AnalysisRequestOptions:
     ml_model_path: Optional[str] = None
     ml_confidence: float = 0.7
     ml_device: str = "auto"
+    team_names: Optional[Dict[int, str]] = None
 
 
 class AnalysisService:
@@ -109,6 +110,11 @@ class AnalysisService:
         config.ml_model.weights_path = options.ml_model_path or ""
         config.ml_model.ml_confidence_threshold = options.ml_confidence
         config.ml_model.ml_device = options.ml_device
+        config.team_names = {
+            int(team_id): str(name).strip()
+            for team_id, name in (options.team_names or {}).items()
+            if str(name or "").strip()
+        }
         return config
 
     def create_output_paths(
@@ -166,6 +172,8 @@ class AnalysisService:
             "event_summary": {k: int(v) for k, v in result.get("event_summary", {}).items()},
             "possession": [float(v) for v in result.get("possession", [50.0, 50.0])],
             "ml_detector_used": bool(result.get("ml_detector_used", False)),
+            "team_colors": result.get("team_colors", []),
+            "team_names": result.get("team_names", {}),
             "artifact_paths": artifact_paths,
         }
 

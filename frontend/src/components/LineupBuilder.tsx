@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 interface Props {
     onSubmit: (data: any) => void;
+    initialHomeTeamName?: string;
+    initialAwayTeamName?: string;
 }
 
 const FORMATIONS: Record<string, { label: string; positions: { x: number; y: number; role: string }[] }> = {
@@ -50,7 +52,7 @@ type TeamData = {
     players: { player_name: string; jersey_number: string; position_slot: number }[];
 };
 
-export default function LineupBuilder({ onSubmit }: Props) {
+export default function LineupBuilder({ onSubmit, initialHomeTeamName = '', initialAwayTeamName = '' }: Props) {
     const [homeTeam, setHomeTeam] = useState<TeamData>({
         team_name: '',
         formation: '4-3-3',
@@ -62,6 +64,15 @@ export default function LineupBuilder({ onSubmit }: Props) {
         players: Array.from({ length: 11 }, (_, i) => ({ player_name: '', jersey_number: '', position_slot: i })),
     });
     const [activeTeam, setActiveTeam] = useState<'home' | 'away'>('home');
+
+    useEffect(() => {
+        if (initialHomeTeamName) {
+            setHomeTeam(prev => prev.team_name ? prev : { ...prev, team_name: initialHomeTeamName });
+        }
+        if (initialAwayTeamName) {
+            setAwayTeam(prev => prev.team_name ? prev : { ...prev, team_name: initialAwayTeamName });
+        }
+    }, [initialHomeTeamName, initialAwayTeamName]);
 
     const current = activeTeam === 'home' ? homeTeam : awayTeam;
     const setCurrent = activeTeam === 'home' ? setHomeTeam : setAwayTeam;
@@ -77,7 +88,7 @@ export default function LineupBuilder({ onSubmit }: Props) {
     const handleSubmit = () => {
         const data = {
             home_team: {
-                team_name: homeTeam.team_name,
+                team_name: homeTeam.team_name.trim() || 'Team 1',
                 formation: homeTeam.formation,
                 players: homeTeam.players.map(p => ({
                     player_name: p.player_name || `Player ${p.position_slot + 1}`,
@@ -86,7 +97,7 @@ export default function LineupBuilder({ onSubmit }: Props) {
                 })),
             },
             away_team: {
-                team_name: awayTeam.team_name,
+                team_name: awayTeam.team_name.trim() || 'Team 2',
                 formation: awayTeam.formation,
                 players: awayTeam.players.map(p => ({
                     player_name: p.player_name || `Player ${p.position_slot + 1}`,

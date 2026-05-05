@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import LineupBuilder from '../components/LineupBuilder';
-import { submitLineups, proceedPipeline } from '../api/client';
+import { getMatch, submitLineups, proceedPipeline } from '../api/client';
 
 export default function LineupSetup() {
     const { id } = useParams();
@@ -9,6 +9,19 @@ export default function LineupSetup() {
     const navigate = useNavigate();
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
+    const [teamNames, setTeamNames] = useState({ home: '', away: '' });
+
+    useEffect(() => {
+        if (!matchId) {
+            return;
+        }
+        getMatch(matchId)
+            .then((res) => setTeamNames({
+                home: res.data.home_team || '',
+                away: res.data.away_team || '',
+            }))
+            .catch(() => { });
+    }, [matchId]);
 
     const handleSubmit = async (data: any) => {
         setSubmitting(true);
@@ -60,7 +73,11 @@ export default function LineupSetup() {
             )}
 
             <div className="glass-card" style={{ marginBottom: '24px' }}>
-                <LineupBuilder onSubmit={handleSubmit} />
+                <LineupBuilder
+                    onSubmit={handleSubmit}
+                    initialHomeTeamName={teamNames.home}
+                    initialAwayTeamName={teamNames.away}
+                />
             </div>
 
             {submitting && (

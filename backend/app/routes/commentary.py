@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from app.database.database import get_db
 from app.models.models import Match, CommentaryOutput
 from app.services.commentary_service import generate_commentary
+from app.services.security import require_enterprise_api_key
 
 router = APIRouter(prefix="/match/{match_id}/commentary", tags=["commentary"])
 
@@ -37,7 +38,7 @@ async def get_commentary_video(match_id: int, db: AsyncSession = Depends(get_db)
         filename=f"match_{match_id}_commentary.mp4"
     )
 
-@router.post("/trigger")
+@router.post("/trigger", dependencies=[Depends(require_enterprise_api_key)])
 async def trigger_commentary(match_id: int, db: AsyncSession = Depends(get_db)):
     """Manually trigger the commentary pipeline for a match."""
     result = await db.execute(select(Match).where(Match.id == match_id))

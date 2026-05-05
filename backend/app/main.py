@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config.settings import settings
 from app.database.database import init_db
+from app.middleware import RateLimitMiddleware, RequestContextMiddleware, SecurityHeadersMiddleware
 from app.routes import (
     analysis,
     analytics,
@@ -62,6 +63,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(RateLimitMiddleware)
 
     app.include_router(upload.router, tags=["Upload"])
     app.include_router(matches.router, tags=["Matches"])
@@ -83,7 +87,21 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict:
-        return {"status": "ok", "service": "football-analysis-platform", "version": "1.0.0"}
+        return {
+            "status": "ok",
+            "service": "football-analysis-platform",
+            "version": "1.0.0",
+            "enterprise_features": {
+                "request_ids": True,
+                "security_headers": settings.SECURITY_ENABLE_HEADERS,
+                "rate_limiting": {
+                    "enabled": True,
+                    "limit": settings.RATE_LIMIT_REQUESTS,
+                    "window_seconds": settings.RATE_LIMIT_WINDOW_SECONDS,
+                },
+                "api_key_protection": settings.ENTERPRISE_ENFORCE_API_KEY,
+            },
+        }
 
     return app
 

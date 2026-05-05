@@ -431,6 +431,7 @@ class PipelineConfig:
     input_video: str = ""
     output_video: str = ""
     output_json: str = ""
+    team_names: Dict[int, str] = field(default_factory=dict)
     verbose: bool = True
 
 

@@ -71,6 +71,7 @@ class MatchAnalysisPipeline:
         self.fps = 30.0
         self._team_fitted = False
         self._sample_count = 0
+        self._team_color_metadata = []
         
         # v4: ML detector integration
         self.ml_detector = None
@@ -157,6 +158,29 @@ class MatchAnalysisPipeline:
                     self.annotator.set_team_colors(auto_colors)
                     for tid, color in auto_colors.items():
                         logger.info(f"Team {tid} display color (BGR): {color}")
+                self._team_color_metadata = self.team_assigner.get_team_color_metadata(
+                    self.config.team_names
+                )
+                for item in self._team_color_metadata:
+                    logger.info(
+                        "%s mapped to %s (%s, %s)",
+                        item["detected_label"],
+                        item["team_name"],
+                        item["color_name"],
+                        item["hex"],
+                    )
+
+    def _team_name_for_id(self, team_id: int) -> str | None:
+        if team_id < 0:
+            return None
+        return self.config.team_names.get(team_id)
+
+    def _enrich_event_team(self, event_payload: Dict) -> Dict:
+        team_id = int(event_payload.get("team_id", -1))
+        team_name = self._team_name_for_id(team_id)
+        if team_name:
+            event_payload["team_name"] = team_name
+        return event_payload
 
     def _assign_teams_continuous(self, frame, tracks):
         """Assign/reassign teams for ALL active players every frame."""
@@ -209,8 +233,10 @@ class MatchAnalysisPipeline:
             "reid_config_path": reid_status["resolved_config_path"],
             "reid_fallback_reason": reid_status["fallback_reason"],
             "reid_strict_mode": reid_status["strict_fastreid"],
+            "team_names": self.config.team_names,
         })
         self.statsbomb_exporter.set_frame_dimensions(reader.width, reader.height)
+        self.statsbomb_exporter.set_team_names(self.config.team_names)
 
         start_time = time.time()
         total_proc = 0
@@ -307,7 +333,7 @@ class MatchAnalysisPipeline:
 
                 # v4: Export events with freeze frames
                 for ev in events:
-                    self.exporter.add_event(ev.to_dict())
+                    self.exporter.add_event(self._enrich_event_team(ev.to_dict()))
 
                 # ── Visualization ──────────────────────────────────
                 annotated = frame.copy()
@@ -381,6 +407,8 @@ class MatchAnalysisPipeline:
         logger.info(f"  Players tracked: {len(self.exporter.player_tracks)}")
 
         # Export
+        if self._team_color_metadata:
+            self.exporter.update_metadata({"team_colors": self._team_color_metadata})
         if json_path:
             jf = self.exporter.export_json(os.path.basename(json_path))
         else:
@@ -388,7 +416,7 @@ class MatchAnalysisPipeline:
         self.exporter.export_events_json()
         self.exporter.export_player_trajectories_csv()
         statsbomb_path = os.path.join(os.path.dirname(jf), "statsbomb_events.json")
-        self.statsbomb_exporter.export_to_file(self.event_detector.events, statsbomb_path)
+        self.statsbomb_exporter.export_to_file(self.exporter.events, statsbomb_path)
 
         summary = self.event_detector.get_event_summary()
         logger.info("\nEvent Summary:")
@@ -413,6 +441,8 @@ class MatchAnalysisPipeline:
             "possession": poss,
             "ml_detector_used": self._ml_enabled,
             "statsbomb_report": statsbomb_path,
+            "team_colors": self._team_color_metadata,
+            "team_names": self.config.team_names,
             "reid_backend": reid_status["backend"],
             "reid_model_path": reid_status["resolved_weights_path"],
             "reid_config_path": reid_status["resolved_config_path"],

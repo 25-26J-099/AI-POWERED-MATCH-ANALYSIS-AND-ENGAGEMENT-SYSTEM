@@ -57,11 +57,13 @@ def _resolve_commentary_profile(match: Match) -> dict:
                 getattr(settings, "COMMENTARY_EDUCATIONAL_MODE", False),
             ),
             "style": tracking_artifacts.get("commentary_style", getattr(settings, "COMMENTARY_STYLE", "neutral")),
+            "football_knowledge": tracking_artifacts.get("football_knowledge"),
         },
         signals={
             "educational_mode": tracking_artifacts.get("educational_mode"),
             "verbosity": tracking_artifacts.get("commentary_verbosity"),
             "style": tracking_artifacts.get("commentary_style"),
+            "football_knowledge": tracking_artifacts.get("football_knowledge"),
         },
     )
     profile.level = normalize_commentary_level(profile.level, default=_resolve_tactical_commentary_level(match))
@@ -134,8 +136,8 @@ async def generate_commentary(match_id: int):
         match.status_detail = "Processing tactical insights and play-by-play"
         await session.commit()
 
-        tactical_level = _resolve_tactical_commentary_level(match)
         commentary_profile = _resolve_commentary_profile(match)
+        tactical_level = commentary_profile.get("level") or _resolve_tactical_commentary_level(match)
         logger.info("Commentary pipeline using tactical level=%s for match_id=%s", tactical_level, match_id)
         
         # Determine source video (fallback to demo if testing, else use uploaded video)

@@ -964,6 +964,7 @@ def generate_commentary_ollama(
     team_name=None,
     analytics_context=None,
     audience_profile=None,
+    short_single_sentence=False,
 ):
     """Call the Ollama API and return the generated commentary."""
     is_spatial_snapshot = str(selection_reason).startswith("spatial_")
@@ -973,6 +974,12 @@ def generate_commentary_ollama(
     adaptation_instructions = build_llm_adaptation_instructions(resolved_profile, adaptation_policy)
 
     metric_str = f"Metric Context:\n{analytics_context}" if analytics_context else "Metric Context: Stats are not available for this action."
+    short_clip_instruction = (
+        "\n\nShort-clip exception: return exactly one short sentence only. "
+        "Keep it punchy, tactical, and under 14 words."
+        if short_single_sentence
+        else ""
+    )
 
     if is_spatial_snapshot:
         user_content = (
@@ -993,6 +1000,7 @@ def generate_commentary_ollama(
             f"4) Defensive structure: {tactical_labels.get('defensive_shape', 'Unknown')}\n\n"
             f"Snapshot Description: {tactical_desc}\n\n"
             f"{metric_str}"
+            f"{short_clip_instruction}"
         )
     else:
         user_content = (
@@ -1001,12 +1009,19 @@ def generate_commentary_ollama(
             f"{adaptation_instructions}\n\n"
             f"Tactical Description: {tactical_desc}\n\n"
             f"{metric_str}"
+            f"{short_clip_instruction}"
+        )
+
+    system_prompt = SYSTEM_PROMPT
+    if short_single_sentence:
+        system_prompt = (
+            f"{SYSTEM_PROMPT} For short clips, output exactly one short sentence and do not add a second sentence."
         )
 
     payload = {
         "model": MODEL_NAME,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
         "stream": False,

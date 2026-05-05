@@ -57,9 +57,7 @@ export default function Processing() {
     return (
         <div className="page-container" style={{ maxWidth: '700px', margin: '0 auto', paddingTop: '48px' }}>
             <h1 className="page-title" style={{ textAlign: 'center' }}>Processing Match</h1>
-            <p className="page-subtitle" style={{ textAlign: 'center' }}>
-                Component 1 tracking and Component 4 analytics are running in sequence.
-            </p>
+            
 
             {error && (
                 <div

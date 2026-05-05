@@ -105,6 +105,7 @@ async def upload_video(
             "commentary_style": commentary_style,
             "football_knowledge": football_knowledge,
             "team_name_map": team_name_map,
+            "original_filename": filename,
         },
         status="team_mapping_pending",
         status_detail="Video uploaded. Waiting for team color detection...",

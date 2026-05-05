@@ -29,6 +29,8 @@ Thumbs.db
 
 # Data & Model weights
 data/
+!backend/data/
+!backend/data/**
 *.pt
 *.pth
 *.pkl

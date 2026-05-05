@@ -53,6 +53,21 @@ GOAL_FOUL_TAC_DELAY = 2.5     # Tactical commentary delayed after PBP for goal/f
 MIN_COMMENTARY_GAP = 1.5      # Minimum seconds between any two commentary entries
 CROWD_DUCK_DB = -8             # How much to duck crowd audio when commentary plays
 
+# -- Dynamic Tactical Cooldown
+TAC_SPATIAL_COOLDOWN_SECONDS = 50.0    # Min gap between spatial TAC commentary events
+TAC_CLIMAX_EXCLUSION_BEFORE = 11.0    # Block TAC N seconds before a climax event
+TAC_CLIMAX_EXCLUSION_AFTER  = 2.0     # Block TAC N seconds after a climax event
+
+# -- Climax Phase-of-Play (PBP Stitching)
+CLIMAX_LOOKBACK_ANCHORS = 5           # Max anchors to stitch before a climax event
+CLIMAX_PHASE_SEPARATOR = '... '       # Separator between stitched PBP lines
+CLIMAX_MIN_ANCHOR_LOOKBACK_SECONDS = 20.0
+
+# -- Audio Time-Budgeting & Back-Alignment
+REACTION_BUFFER_SECONDS = 0.75         # Delay after climax before commentary lands
+MAX_SPEEDUP_RATIO = 1.25               # Never stretch audio faster than 1.25x
+MIN_AUDIO_GAP_SECONDS = 0.30           # Minimum gap between any two audio clips
+
 TEMP_DIR = os.path.join(tempfile.gettempdir(), "merged_commentary")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -100,6 +115,270 @@ def event_video_seconds(event, base_ts):
     return max(0.0, ts - base_ts)
 
 
+
+
+# ─────────────────────────────────────────────────────────────
+# CLIMAX EVENT IDENTIFICATION
+# ─────────────────────────────────────────────────────────────
+
+def is_climax_event(event):
+    """True for any Shot, Goal, or dangerous set-piece in/near the penalty area."""
+    et = tac.get_event_type(event)
+    if et == "Shot":
+        return True
+    if tac.is_goal_event(event):
+        return True
+    if tac.is_corner_or_free_kick_event(event):
+        loc = tac.get_event_location(event)
+        if loc and tac.is_penalty_or_goal_area_location(loc):
+            return True
+    return False
+
+
+def identify_climax_events(events, base_ts):
+    """Return list of {video_ts, event, event_id, is_goal} for all climax events."""
+    climax_events = []
+    for ev in events:
+        if not is_climax_event(ev):
+            continue
+        video_ts = event_video_seconds(ev, base_ts)
+        climax_events.append({
+            "video_ts": video_ts,
+            "event": ev,
+            "event_id": tac.get_event_id(ev),
+            "is_goal": tac.is_goal_event(ev),
+        })
+    print(f"  Identified {len(climax_events)} climax events.")
+    return climax_events
+
+
+# ─────────────────────────────────────────────────────────────
+# AUDIO TIME-STRETCHING (PITCH-PRESERVING)
+# ─────────────────────────────────────────────────────────────
+
+def apply_time_stretch(audio_path, ratio, temp_dir=None):
+    """Speed up audio by ratio using ffmpeg atempo (pitch-preserving)."""
+    import subprocess
+    try:
+        import imageio_ffmpeg
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        ffmpeg_exe = "ffmpeg"
+
+    if ratio < 1.001:
+        return audio_path
+
+    out_dir = temp_dir or os.path.dirname(audio_path)
+    basename = os.path.splitext(os.path.basename(audio_path))[0]
+    output_path = os.path.join(out_dir, f"{basename}_s{ratio:.3f}.wav")
+
+    try:
+        atempo = f"atempo={min(ratio, 2.0):.6f}"
+        result = subprocess.run(
+            [ffmpeg_exe, "-i", audio_path, "-filter:a", atempo, "-y", output_path],
+            capture_output=True, timeout=60,
+        )
+        if result.returncode == 0 and os.path.exists(output_path):
+            return output_path
+        print(f"  [STRETCH WARN] ffmpeg {result.returncode} -- using original")
+    except Exception as e:
+        print(f"  [STRETCH ERROR] {e} -- using original audio")
+    return audio_path
+
+
+def get_wav_duration(wav_path):
+    """Return WAV file duration in seconds."""
+    import wave as _wave
+    try:
+        with _wave.open(wav_path, "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            return frames / float(rate) if rate > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
+# ─────────────────────────────────────────────────────────────
+# PHASE-OF-PLAY PBP STITCHING
+# ─────────────────────────────────────────────────────────────
+
+def stitch_pbp_lines(lines):
+    """Join commentary lines with ellipsis connectors into one flowing string."""
+    if not lines:
+        return ""
+    cleaned = []
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if i < len(lines) - 1:
+            line = line.rstrip(".!?,;:") + "..."
+        cleaned.append(line)
+    return " ".join(cleaned)
+
+
+def _build_climax_llm_prompt(flattened_stream, intensity, anchor_event, is_goal):
+    """LLM prompt for climax anchor with relaxed word limit."""
+    parts = [f"Intensity: {intensity}"]
+    if is_goal:
+        parts.append(
+            "[SYSTEM INSTRUCTION: This is a GOAL. Generate a short, explosive, "
+            "celebratory exclamation. Use dramatic language. Keep it under 15 words.]"
+        )
+    else:
+        parts.append(
+            "[SYSTEM INSTRUCTION: This is a climax moment (shot/chance). "
+            "Generate a short, punchy call connecting to the build-up. "
+            "Do NOT use GOAL. Keep it under 12 words.]"
+        )
+    parts.append("")
+    parts.append("Flattened Event Stream:")
+    parts.append(flattened_stream)
+    return "\n".join(parts)
+
+
+def build_climax_phase_timeline(events, threesixty_lookup, base_ts, climax_events, llm_available):
+    """
+    For each climax event, gather preceding PBP anchors, stitch them together,
+    and return a single climax_phase entry per climax.
+    """
+    print("\n=== Building Climax Phase-of-Play Timeline ===")
+    phase_entries = []
+    subsumed_ids = set()
+
+    if not climax_events:
+        return phase_entries, subsumed_ids
+
+    idx_360 = threesixty_lookup
+    all_anchors = pbp.detect_all_anchors(events, idx_360)
+
+    for cx in climax_events:
+        cx_ts = cx["video_ts"]
+        cx_event_id = cx["event_id"]
+        cx_event = cx["event"]
+        is_goal = cx["is_goal"]
+
+        lookback_start = cx_ts - CLIMAX_MIN_ANCHOR_LOOKBACK_SECONDS
+        harvested = []
+        for anchor in all_anchors:
+            a_ts = event_video_seconds(anchor["event"], base_ts)
+            a_id = anchor["event"].get("id")
+            if a_id == cx_event_id or is_climax_event(anchor["event"]):
+                continue
+            if lookback_start <= a_ts < cx_ts:
+                harvested.append((a_ts, anchor))
+
+        harvested.sort(key=lambda x: x[0])
+        harvested = harvested[-CLIMAX_LOOKBACK_ANCHORS:]
+
+        commentary_lines = []
+        phase_event_ids = set()
+        t_start = cx_ts
+
+        for a_ts, anchor in harvested:
+            anchor_idx = anchor["index"]
+            anchor_event = anchor["event"]
+            reason = anchor.get("reason", "climax_phase_buildup")
+            a_id = anchor_event.get("id")
+            phase_event_ids.add(a_id)
+            line = pbp.generate_template_commentary(events, anchor_idx, {"reason": reason})
+            line = pbp.enforce_surname_only(line, events).strip()
+            if line:
+                commentary_lines.append(line)
+            if a_ts < t_start:
+                t_start = a_ts
+
+        cx_idx = next(
+            (i for i, ev in enumerate(events) if tac.get_event_id(ev) == cx_event_id), None
+        )
+        if cx_idx is not None:
+            if llm_available and pbp.is_llm_commentary_event(cx_event):
+                frame_360 = idx_360.get(cx_event_id)
+                intensity = pbp.classify_intensity(cx_event, frame_360)
+                ctx_events = pbp.build_context_window(events, cx_idx, {"reason": "climax"})
+                flattened = pbp.build_flattened_stream(
+                    ctx_events, cx_event, {"reason": "climax"}, idx_360
+                )
+                prompt = _build_climax_llm_prompt(flattened, intensity, cx_event, is_goal)
+                climax_line = pbp.generate_commentary(prompt)
+            else:
+                climax_line = pbp.generate_template_commentary(
+                    events, cx_idx, {"reason": "goal" if is_goal else "shot"}
+                )
+            climax_line = pbp.enforce_surname_only(climax_line, events).strip()
+            if climax_line:
+                commentary_lines.append(climax_line)
+
+        if not commentary_lines:
+            continue
+
+        stitched_text = stitch_pbp_lines(commentary_lines)
+        frame_360 = idx_360.get(cx_event_id)
+        intensity = "Goal" if is_goal else pbp.classify_intensity(cx_event, frame_360)
+
+        phase_entry = {
+            "video_ts": t_start,
+            "climax_ts": cx_ts,
+            "commentator": "pbp",
+            "text": stitched_text,
+            "event_id": f"climax_phase::{cx_event_id}",
+            "selection_reason": "climax_phase",
+            "is_goal": is_goal,
+            "is_foul": False,
+            "intensity": intensity,
+            "event": cx_event,
+            "is_climax_phase": True,
+            "phase_event_ids": list(phase_event_ids),
+            "phase_lines": commentary_lines,
+        }
+        phase_entries.append(phase_entry)
+        subsumed_ids.update(phase_event_ids)
+        subsumed_ids.add(cx_event_id)
+
+        print(
+            f"  [PHASE] Climax @ {cx_ts:.1f}s | buildup from {t_start:.1f}s "
+            f"| {len(commentary_lines)} lines | '{stitched_text[:70]}...'"
+        )
+
+    return phase_entries, subsumed_ids
+
+
+# ─────────────────────────────────────────────────────────────
+# AUDIO BACK-ALIGNMENT
+# ─────────────────────────────────────────────────────────────
+
+def back_align_climax_entries(timeline):
+    """
+    Pin climax_phase audio end to T_climax + REACTION_BUFFER_SECONDS.
+    Formula: T_start = T_climax - audio_duration + REACTION_BUFFER_SECONDS
+    """
+    print("\n=== Back-Aligning Climax Phase Audio ===")
+    for entry in timeline:
+        if not entry.get("is_climax_phase") or not entry.get("audio_path"):
+            continue
+        climax_ts = entry.get("climax_ts", entry["video_ts"])
+        audio_dur = entry.get("audio_duration", 0.0)
+        new_start = max(0.0, climax_ts - audio_dur + REACTION_BUFFER_SECONDS)
+        old_start = entry["video_ts"]
+        entry["video_ts"] = new_start
+        print(
+            f"  [BACK-ALIGN] climax={climax_ts:.1f}s dur={audio_dur:.1f}s "
+            f"start: {old_start:.1f}s -> {new_start:.1f}s"
+        )
+
+    timeline.sort(key=lambda e: e["video_ts"])
+    for i in range(1, len(timeline)):
+        prev = timeline[i - 1]
+        curr = timeline[i]
+        if not prev.get("audio_path") or not curr.get("audio_path"):
+            continue
+        prev_end = prev["video_ts"] + prev.get("audio_duration", 0.0)
+        if curr["video_ts"] < prev_end + MIN_AUDIO_GAP_SECONDS:
+            if curr.get("is_climax_phase"):
+                print(f"  [COLLISION] Climax phase @ {curr['video_ts']:.1f}s wins over prev.")
+            else:
+                curr["video_ts"] = prev_end + MIN_AUDIO_GAP_SECONDS
+
+    return timeline
+
 # ─────────────────────────────────────────────────────────────
 # PRIORITY ARBITRATION ENGINE
 # ─────────────────────────────────────────────────────────────
@@ -126,19 +405,21 @@ def is_high_action_pbp_priority_event(event):
     return False
 
 
-def build_tactical_timeline(events, threesixty_lookup, level, base_ts):
+def build_tactical_timeline(
+    events, threesixty_lookup, level, base_ts,
+    analytics_context=None, climax_timestamps=None
+):
     """
-    Run the tactical pipeline and produce a list of commentary entries.
-    Each entry: {video_ts, commentator, text, event_id, selection_reason}
+    Run the tactical pipeline with dynamic cooldown and climax exclusion zones.
     """
     print("\n=== Running Tactical Commentary Pipeline ===")
+    climax_timestamps = climax_timestamps or []
     commentary_plan = tac.build_commentary_plan(events, threesixty_lookup)
 
     if not commentary_plan:
         print("  No tactical events selected.")
         return []
 
-    # Build event lookup
     event_id_to_event = {}
     for ev in events:
         eid = tac.get_event_id(ev)
@@ -146,20 +427,54 @@ def build_tactical_timeline(events, threesixty_lookup, level, base_ts):
             event_id_to_event[eid] = ev
 
     entries = []
+    spatial_count = 0
+    last_spatial_ts = -TAC_SPATIAL_COOLDOWN_SECONDS
+    clip_duration = tac.get_clip_duration_seconds(events)
+    max_spatial_tac = max(1, int(clip_duration / TAC_SPATIAL_COOLDOWN_SECONDS))
+    print(f"  Clip duration: {clip_duration:.1f}s | Max spatial TAC: {max_spatial_tac}")
+
     for item in commentary_plan:
         target_id = item["event_id"]
         event = event_id_to_event.get(target_id)
         if event is None:
             continue
 
-        # Process the event to get tactical description
+        video_ts = event_video_seconds(event, base_ts)
+        reason = item.get("selection_reason", "auto")
+        is_mandatory = reason in ("goal", "foul")
+        is_high_value_setpiece = (
+            tac.is_corner_or_free_kick_event(event) and is_penalty_area_event(event)
+        )
+
+        # Climax exclusion zone
+        if not is_mandatory:
+            in_climax_zone = any(
+                -TAC_CLIMAX_EXCLUSION_AFTER <= (video_ts - ct) <= TAC_CLIMAX_EXCLUSION_BEFORE
+                for ct in climax_timestamps
+            )
+            if in_climax_zone:
+                print(f"  [TAC SKIP - CLIMAX ZONE] {target_id} @ {video_ts:.1f}s")
+                continue
+
+        # Spatial cooldown
+        is_spatial = reason.startswith("spatial_")
+        if is_spatial and not is_high_value_setpiece:
+            if spatial_count >= max_spatial_tac:
+                print(f"  [TAC SKIP - MAX SPATIAL] {target_id} @ {video_ts:.1f}s")
+                continue
+            if (video_ts - last_spatial_ts) < TAC_SPATIAL_COOLDOWN_SECONDS:
+                print(
+                    f"  [TAC SKIP - COOLDOWN] {target_id} @ {video_ts:.1f}s "
+                    f"(gap={video_ts - last_spatial_ts:.1f}s)"
+                )
+                continue
+
         result = tac.process_event(
             event, events, threesixty_lookup,
-            selection_reason=item.get("selection_reason", "auto"),
+            selection_reason=reason,
             source_event_id=item.get("source_event_id"),
         )
 
-        # Generate commentary at the requested level only
         print(f"  Generating tactical [{level}] for event {target_id}...")
         commentary = tac.generate_commentary_ollama(
             result["tactical_description"],
@@ -170,14 +485,16 @@ def build_tactical_timeline(events, threesixty_lookup, level, base_ts):
         )
         print(f"    Done ({len(commentary)} chars)")
 
-        video_ts = event_video_seconds(event, base_ts)
+        if is_spatial and not is_high_value_setpiece:
+            spatial_count += 1
+            last_spatial_ts = video_ts
 
         entries.append({
             "video_ts": video_ts,
             "commentator": "tactical",
             "text": commentary,
             "event_id": target_id,
-            "selection_reason": item.get("selection_reason", "auto"),
+            "selection_reason": reason,
             "is_goal": result.get("is_goal", False),
             "is_foul": result.get("is_foul", False),
             "event": event,
@@ -186,8 +503,7 @@ def build_tactical_timeline(events, threesixty_lookup, level, base_ts):
     print(f"  Tactical pipeline produced {len(entries)} entries.")
     return entries
 
-
-def build_pbp_timeline(events, threesixty_lookup, base_ts):
+def build_pbp_timeline(events, threesixty_lookup, base_ts, subsumed_ids=None):
     """
     Run the PBP pipeline and produce a list of commentary entries.
     """
@@ -196,6 +512,11 @@ def build_pbp_timeline(events, threesixty_lookup, base_ts):
 
     anchors = pbp.detect_all_anchors(events, idx_360)
     print(f"  Detected {len(anchors)} PBP anchor events.")
+
+    if subsumed_ids:
+        before = len(anchors)
+        anchors = [a for a in anchors if a["event"].get("id") not in subsumed_ids]
+        print(f"  Filtered {before - len(anchors)} subsumed anchors (climax phase covers them).")
 
     # Check Ollama for LLM events
     needs_llm = any(pbp.is_llm_commentary_event(a["event"]) for a in anchors)
@@ -366,31 +687,90 @@ def merge_timelines(tac_entries, pbp_entries):
 
 def generate_tts_audio(timeline, progress_callback=None):
     """
-    Generate WAV files for each commentary entry using Coqui TTS (XTTSv2).
+    Generate WAV files for each commentary entry using Qwen3-TTS voice cloning.
+    Uses Qwen/Qwen3-TTS-12Hz-0.6B-Base for voice cloning from reference audio samples.
     Returns list of entries with 'audio_path' and 'audio_duration' added.
     """
-    print("\n=== Generating TTS Audio with XTTSv2 ===")
+    print("\n=== Generating TTS Audio with Qwen3-TTS (0.6B) ===")
 
     import wave
     import torch
-    
-    # Automatically accept Coqui TTS TOS programmatically
-    os.environ["COQUI_TOS_AGREED"] = "1"
-    
-    from TTS.api import TTS
+    import soundfile as sf
+    from qwen_tts import Qwen3TTSModel
+
+    # Reference text transcripts for each voice sample (needed for high-quality cloning)
+    REF_TEXTS = {
+        "Goal.mp3": (
+            "Goal, Messi finds space in the box to head the ball. "
+            "that was a brilliant effort by him and the teammates. "
+            "Neymar with an amazing assist"
+        ),
+        "High.mp3": (
+            "Messi is making a move towards the goal and he makes a pass to neymey, "
+            "Neymar hit a volley, and Oh he misses it, that was a close one"
+        ),
+        "Neutral.mp3": (
+            "England tactical formation seems decent, Belgium players are gathering "
+            "around for a strategic move, the opposition seems to adapt to this properly as well"
+        ),
+        "Tactical.mp3": (
+            "Goal, Messi finds space in the box to head the ball. "
+            "that was a brilliant effort by him and the teammates. "
+            "Neymar with an assist"
+        ),
+    }
 
     if progress_callback:
-        progress_callback("Initializing XTTSv2 (this may take a moment)...")
+        progress_callback("Initializing Qwen3-TTS (this may take a moment)...")
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"  Loading XTTSv2 on {device}...")
-    
-    # Initialize TTS
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    # Use bfloat16 on CUDA for lower VRAM usage on 4GB GPU, float32 on CPU
+    dtype = torch.bfloat16 if device.startswith("cuda") else torch.float32
+    print(f"  Loading Qwen3-TTS-0.6B-Base on {device} (dtype={dtype})...")
+
+    # Initialize model
     try:
-        tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+        model = Qwen3TTSModel.from_pretrained(
+            "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+            device_map=device,
+            dtype=dtype,
+        )
     except Exception as e:
-        print(f"  Failed to initialize TTS: {e}")
+        print(f"  Failed to initialize Qwen3-TTS: {e}")
         return timeline
+
+    # Pre-build reusable voice clone prompts for each reference voice
+    # This avoids re-extracting voice features for every commentary line
+    if progress_callback:
+        progress_callback("Building voice clone prompts from reference audio...")
+
+    voice_prompts = {}
+    for filename, ref_text in REF_TEXTS.items():
+        ref_path = os.path.join(SCRIPT_DIR, "TTS", filename)
+        if os.path.exists(ref_path):
+            try:
+                print(f"  Building voice prompt for {filename}...")
+                voice_prompts[filename] = model.create_voice_clone_prompt(
+                    ref_audio=ref_path,
+                    ref_text=ref_text,
+                )
+            except Exception as e:
+                print(f"  WARNING: Failed to build prompt for {filename}: {e}")
+                # Fallback: try without ref_text (x_vector_only_mode)
+                try:
+                    voice_prompts[filename] = model.create_voice_clone_prompt(
+                        ref_audio=ref_path,
+                        ref_text="",
+                        x_vector_only_mode=True,
+                    )
+                except Exception as e2:
+                    print(f"  ERROR: Could not build any prompt for {filename}: {e2}")
+
+    if not voice_prompts:
+        print("  ERROR: No voice prompts could be built. Aborting TTS.")
+        return timeline
+
+    print(f"  Built {len(voice_prompts)} voice clone prompts.")
 
     total = len(timeline)
     for i, entry in enumerate(timeline):
@@ -405,34 +785,39 @@ def generate_tts_audio(timeline, progress_callback=None):
 
         wav_path = os.path.join(TEMP_DIR, f"tts_{i:03d}_{entry['commentator']}.wav")
 
-        # Determine reference voice logic
+        # Determine which reference voice to use
         if entry["commentator"] == "pbp":
             intensity = entry.get("intensity", "Neutral")
             if intensity == "Goal":
-                speaker_wav = os.path.join(SCRIPT_DIR, "TTS", "Goal.mp3")
+                ref_filename = "Goal.mp3"
             elif intensity == "High":
-                speaker_wav = os.path.join(SCRIPT_DIR, "TTS", "High.mp3")
+                ref_filename = "High.mp3"
             else:
-                speaker_wav = os.path.join(SCRIPT_DIR, "TTS", "Neutral.mp3")
+                ref_filename = "Neutral.mp3"
         else:  # tactical
-            speaker_wav = os.path.join(SCRIPT_DIR, "TTS", "Tactical.mp3")
+            ref_filename = "Tactical.mp3"
 
-        # Fallback to Neutral if chosen path is missing somehow
-        if not os.path.exists(speaker_wav):
-            fallback_wav = os.path.join(SCRIPT_DIR, "TTS", "Neutral.mp3")
-            if os.path.exists(fallback_wav):
-                speaker_wav = fallback_wav
+        # Fallback to Neutral if chosen prompt is missing
+        if ref_filename not in voice_prompts:
+            if "Neutral.mp3" in voice_prompts:
+                ref_filename = "Neutral.mp3"
             else:
-                # Absolute worst case, XTTS won't work without a reference audio.
-                # Skip generation.
-                print(f"  [{i+1}/{total}] ERROR reference audio missing: {speaker_wav}")
+                # No usable prompt at all — skip this entry
+                print(f"  [{i+1}/{total}] ERROR: no voice prompt available for {ref_filename}")
                 entry["audio_path"] = None
                 entry["audio_duration"] = 0.0
                 continue
 
         try:
-            print(f"  [{i+1}/{total}] {entry['commentator'].upper():9s} - Cloning: {os.path.basename(speaker_wav)}")
-            tts.tts_to_file(text=text, speaker_wav=speaker_wav, language="en", file_path=wav_path)
+            print(f"  [{i+1}/{total}] {entry['commentator'].upper():9s} - Voice: {ref_filename}")
+            wavs, sr = model.generate_voice_clone(
+                text=text,
+                language="English",
+                voice_clone_prompt=voice_prompts[ref_filename],
+            )
+
+            # Save the generated audio
+            sf.write(wav_path, wavs[0], sr)
 
             # Get duration using the wave module
             if os.path.exists(wav_path):
@@ -450,6 +835,11 @@ def generate_tts_audio(timeline, progress_callback=None):
             print(f"  [{i+1}/{total}] ERROR generating/reading audio: {e}")
             entry["audio_path"] = None
             entry["audio_duration"] = 0.0
+
+    # Free GPU memory after TTS generation is complete
+    del model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # Fix overlaps: if one commentary would overlap the next, shift the next
     for i in range(1, len(timeline)):
@@ -649,11 +1039,24 @@ def run_pipeline(level, progress_callback=None, done_callback=None):
         # ── Generate both commentary timelines ──
         if progress_callback:
             progress_callback("Generating tactical commentary...")
-        tac_entries = build_tactical_timeline(events, threesixty_lookup, level, base_ts)
+        # -- Identify climax events
+        climax_events = identify_climax_events(events, base_ts)
+        climax_timestamps = [cx["video_ts"] for cx in climax_events]
+        llm_available = pbp.check_ollama_running() and pbp.check_model_exists(pbp.MODEL_NAME)
+        if progress_callback:
+            progress_callback("Building climax phase-of-play commentary...")
+        phase_entries, subsumed_ids = build_climax_phase_timeline(
+            events, threesixty_lookup, base_ts, climax_events, llm_available
+        )
+        tac_entries = build_tactical_timeline(
+            events, threesixty_lookup, level, base_ts,
+            climax_timestamps=climax_timestamps,
+        )
 
         if progress_callback:
             progress_callback("Generating play-by-play commentary...")
-        pbp_entries = build_pbp_timeline(events, threesixty_lookup, base_ts)
+        pbp_entries = build_pbp_timeline(events, threesixty_lookup, base_ts, subsumed_ids=subsumed_ids)
+        pbp_entries.extend(phase_entries)
 
         # ── Merge with priority arbitration ──
         if progress_callback:
@@ -674,6 +1077,9 @@ def run_pipeline(level, progress_callback=None, done_callback=None):
         # ── Compose final video ──
         if progress_callback:
             progress_callback("Building final video (this may take a moment)...")
+        # -- Back-align climax audio
+        timeline = back_align_climax_entries(timeline)
+
         output_path = compose_video_with_commentary(timeline, progress_callback)
 
         if done_callback:

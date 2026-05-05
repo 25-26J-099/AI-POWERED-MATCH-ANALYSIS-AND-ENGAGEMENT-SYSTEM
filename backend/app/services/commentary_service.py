@@ -144,6 +144,12 @@ async def generate_commentary(match_id: int):
         video_path = "D:\\ResearchPoject\\AI-POWERED-MATCH-ANALYSIS-AND-ENGAGEMENT-SYSTEM\\backend\\app\\commentary\\Demovid.mp4"
         if match.video_path and os.path.exists(match.video_path):
              video_path = match.video_path
+
+        clip_filename = None
+        if isinstance(match.tracking_artifacts, dict):
+            clip_filename = match.tracking_artifacts.get("original_filename")
+        if not clip_filename:
+            clip_filename = os.path.basename(video_path)
         
         # Extract commentary logic to sync thread
         def run_sync_pipeline():
@@ -174,6 +180,7 @@ async def generate_commentary(match_id: int):
                 events=event_json,
                 threesixty_lookup=threesixty_lookup,
                 video_file=video_path,
+                clip_filename=clip_filename,
                 level=tactical_level,
                 analytics_context=analytics_context,
                 progress_callback=progress_cb,

@@ -79,6 +79,10 @@ export const getLineups = (matchId: number) => api.get(`/match/${matchId}/lineup
 // ── Embeddings ────────────────────────────────────────────────────────────
 export const getStyleMap = (matchId: number) => api.get(`/match/${matchId}/style-map`);
 
+// ── Decision Quality ──────────────────────────────────────────────────────
+export const getDecisionQuality = (matchId: number) =>
+    api.get(`/match/${matchId}/decision-quality`);
+
 // ── Analysis ──────────────────────────────────────────────────────────────
 export const getAiAnalysis = (matchId: number) => api.post(`/match/${matchId}/ai-analysis`);
 

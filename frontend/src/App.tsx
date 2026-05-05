@@ -10,6 +10,7 @@ import PlayerComparison from './pages/PlayerComparison';
 import StyleMap from './pages/StyleMap';
 import AiAnalysis from './pages/AiAnalysis';
 import Commentary from './pages/Commentary';
+import DecisionQuality from './pages/DecisionQuality';
 import LineupSetup from './pages/LineupSetup';
 import TeamMapping from './pages/TeamMapping';
 
@@ -30,6 +31,7 @@ function App() {
           <Route path="/match/:id/styles" element={<StyleMap />} />
           <Route path="/match/:id/analysis" element={<AiAnalysis />} />
           <Route path="/match/:id/commentary" element={<Commentary />} />
+          <Route path="/match/:id/decision-quality" element={<DecisionQuality />} />
         </Routes>
       </BrowserRouter>
     </ThemeProvider>

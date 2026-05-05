@@ -47,6 +47,7 @@ export default function MatchDashboard() {
                 <div style={{ marginTop: '16px', display: 'flex', gap: '12px', justifyContent: 'center' }}>
                     <Link to={`/match/${matchId}/compare`}><button className="btn-secondary">Compare Players</button></Link>
                     <Link to={`/match/${matchId}/styles`}><button className="btn-secondary">Style Map</button></Link>
+                    <Link to={`/match/${matchId}/decision-quality`}><button className="btn-secondary">Decision Quality</button></Link>
                     <Link to={`/match/${matchId}/analysis`}><button className="btn-secondary">AI Analysis</button></Link>
                     <Link to={`/match/${matchId}/commentary`}><button className="btn-secondary">Commentary</button></Link>
                 </div>

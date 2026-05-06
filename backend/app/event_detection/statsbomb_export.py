@@ -225,12 +225,28 @@ class StatsBombExporter:
         return [round(x_pitch, 1), round(y_pitch, 1)]
 
     def _preserve_freeze_frame(self, freeze_frame: Any) -> Optional[Dict[str, Any]]:
-        """
-        Preserve freeze-frame payload exactly as provided by internal event output.
+        """Preserve freeze-frame, converting all player/ball locations to pitch units.
+
+        Player locations from the tracking pipeline are in video pixel coordinates.
+        They must be converted to StatsBomb pitch units (0-120 × 0-80) using the
+        same linear mapping as _convert_coordinates so that analytics (xG etc.) can
+        use them directly without knowing the original frame dimensions.
         """
         if not isinstance(freeze_frame, dict):
             return None
-        return deepcopy(freeze_frame)
+        result = deepcopy(freeze_frame)
+        for player in result.get("players", []):
+            loc = player.get("location")
+            if loc and len(loc) >= 2:
+                converted = self._convert_coordinates(loc)
+                if converted:
+                    player["location"] = converted
+        ball_loc = result.get("ball_location")
+        if ball_loc:
+            converted_ball = self._convert_coordinates(ball_loc)
+            if converted_ball:
+                result["ball_location"] = converted_ball
+        return result
 
     def _infer_action_locations(
         self,

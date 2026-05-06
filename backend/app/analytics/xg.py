@@ -32,9 +32,24 @@ _DEFENDER_PROXIMITY_THRESHOLD = 5.0
 
 def _freeze_frame_players(event: dict) -> list[dict]:
     freeze_frame_raw = event.get("freeze_frame", [])
+    players: list[dict]
     if isinstance(freeze_frame_raw, dict):
-        return freeze_frame_raw.get("players", [])
-    return freeze_frame_raw if isinstance(freeze_frame_raw, list) else []
+        players = freeze_frame_raw.get("players", [])
+    elif isinstance(freeze_frame_raw, list):
+        players = freeze_frame_raw
+    else:
+        return []
+
+    # Guard against pixel-space coordinates from old exports where player locations
+    # were not converted to pitch units.  StatsBomb pitch is 120×80 — any coordinate
+    # outside that range means the freeze frame was stored in video pixels and cannot
+    # be used reliably for distance-based features.  Fall back to no-360 defaults.
+    for p in players:
+        loc = p.get("location") if isinstance(p, dict) else None
+        if loc and len(loc) >= 2 and (loc[0] > 120.0 or loc[1] > 80.0):
+            return []   # pixel-space freeze frame — treat as absent
+
+    return players
 
 
 def _extract_features_from_event(event: dict) -> Optional[dict]:

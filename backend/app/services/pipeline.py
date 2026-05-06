@@ -9,6 +9,7 @@ from app.database.database import async_session
 from app.models.models import Match, Event, Player, Team, PlayerStats, PlayerEmbedding
 from app.services.event_parser import parse_events
 from app.analytics.player_stats import compute_player_stats
+from app.analytics.vaep import compute_match_vaep_values
 from app.analytics.ratings import compute_rating
 from app.analytics.embeddings import compute_embeddings
 from app.services.commentary_service import generate_commentary
@@ -94,6 +95,15 @@ async def run_full_pipeline(match_id: int):
             await session.execute(PlayerEmbedding.__table__.delete().where(PlayerEmbedding.match_id == match_id))
             await session.commit()
 
+            # Compute match-level VAEP using all events in chronological order.
+            # Events are already ordered by period, minute, second from the DB query above.
+            all_raw_events = [e.raw_data for e in events if e.raw_data]
+            precomputed_vaep = compute_match_vaep_values(all_raw_events)
+            logger.info(
+                "📊 match_id=%s: Sequential VAEP computed for %s actions",
+                match_id, len(precomputed_vaep),
+            )
+
             # Group events by player
             player_events_map = defaultdict(list)
             events_without_player = 0
@@ -121,7 +131,11 @@ async def run_full_pipeline(match_id: int):
 
             for player_id, player_raw_events in player_events_map.items():
                 logger.info("  → Computing stats for player_id=%s (%s events)", player_id, len(player_raw_events))
-                stats = compute_player_stats(player_raw_events)
+                # Pass precomputed_vaep (empty dict = models unavailable → per-event fallback)
+                stats = compute_player_stats(
+                    player_raw_events,
+                    precomputed_vaep=precomputed_vaep if precomputed_vaep else None,
+                )
 
                 rating = compute_rating(
                     vaep=stats["vaep"],

@@ -2,15 +2,29 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
 from app.config.pipeline_config import PipelineConfig
 from app.event_detection.team_assigner import TeamAssigner
-from app.event_detection.tracker import PlayerBallTracker
+from app.event_detection.tracker import PlayerBallTracker, YOLODetector
 from app.utils.video_utils import VideoReader
 
 logger = logging.getLogger(__name__)
+_PREVIEW_DETECTOR: YOLODetector | None = None
+_PREVIEW_DETECTOR_LOCK = threading.Lock()
+
+
+def _get_preview_detector(config: PipelineConfig) -> YOLODetector:
+    global _PREVIEW_DETECTOR
+
+    with _PREVIEW_DETECTOR_LOCK:
+        if _PREVIEW_DETECTOR is None:
+            detector = YOLODetector(config)
+            detector.initialize()
+            _PREVIEW_DETECTOR = detector
+        return _PREVIEW_DETECTOR
 
 
 def detect_team_colors_preview(
@@ -34,7 +48,8 @@ def detect_team_colors_preview(
     config.optimization.max_input_height = 540
     config.team_assignment.n_clusters = 2
 
-    tracker = PlayerBallTracker(config)
+    shared_detector = _get_preview_detector(config)
+    tracker = PlayerBallTracker(config, detector=shared_detector)
     team_assigner = TeamAssigner(config)
     reader: VideoReader | None = None
 

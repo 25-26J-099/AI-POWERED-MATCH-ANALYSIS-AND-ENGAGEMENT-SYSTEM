@@ -8,6 +8,8 @@ const api = axios.create({
     headers: { 'Content-Type': 'application/json' },
 });
 
+const inFlightTeamColorRequests = new Map<number, Promise<any>>();
+
 export const buildApiUrl = (path: string) =>
     `${API_BASE.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
 
@@ -46,8 +48,21 @@ export const uploadVideo = (
 export const submitLineups = (matchId: number, data: any) =>
     api.post(`/match/${matchId}/lineups`, data);
 
-export const detectTeamColors = (matchId: number) =>
-    api.post(`/match/${matchId}/detect-team-colors`);
+export const detectTeamColors = (matchId: number) => {
+    const existing = inFlightTeamColorRequests.get(matchId);
+    if (existing) {
+        return existing;
+    }
+
+    const request = api
+        .post(`/match/${matchId}/detect-team-colors`)
+        .finally(() => {
+            inFlightTeamColorRequests.delete(matchId);
+        });
+
+    inFlightTeamColorRequests.set(matchId, request);
+    return request;
+};
 
 export const confirmTeamMapping = (matchId: number, teamNames: Record<number, string>) =>
     api.post(`/match/${matchId}/team-mapping`, { team_names: teamNames });

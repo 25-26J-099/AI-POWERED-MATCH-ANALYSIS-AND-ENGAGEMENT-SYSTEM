@@ -2,6 +2,11 @@ import asyncio
 import os
 import shutil
 import logging
+import subprocess
+import time
+from pathlib import Path
+
+import requests
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app.commentary.adaptive import normalize_commentary_level, resolve_audience_profile
@@ -15,6 +20,74 @@ from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 ALLOWED_COMMENTARY_LEVELS = {"Beginner", "Intermediate", "Expert"}
+
+
+def _prepend_binary_dir(binary_path: str | None) -> str | None:
+    if not binary_path:
+        return None
+    resolved = Path(binary_path).expanduser()
+    if not resolved.is_file():
+        return None
+    binary_dir = str(resolved.parent)
+    path_parts = os.environ.get("PATH", "").split(os.pathsep)
+    if binary_dir not in path_parts:
+        os.environ["PATH"] = binary_dir + os.pathsep + os.environ.get("PATH", "")
+    return str(resolved)
+
+
+def _configure_external_tools() -> tuple[str, str | None, str | None]:
+    ollama_url = getattr(settings, "OLLAMA_URL", "http://localhost:11434").rstrip("/")
+    ollama_bin = _prepend_binary_dir(getattr(settings, "OLLAMA_BINARY", None))
+    sox_bin = _prepend_binary_dir(getattr(settings, "SOX_BINARY", None))
+    ffmpeg_bin = _prepend_binary_dir(getattr(settings, "FFMPEG_BINARY", None))
+    if ffmpeg_bin:
+        if Path(ffmpeg_bin).name.lower() != "ffmpeg.exe":
+            shim_dir = Path(os.getenv("TEMP", ".")) / "merged_commentary" / "bin"
+            shim_dir.mkdir(parents=True, exist_ok=True)
+            shim_path = shim_dir / "ffmpeg.exe"
+            try:
+                if not shim_path.exists() or shim_path.stat().st_size != Path(ffmpeg_bin).stat().st_size:
+                    shutil.copy2(ffmpeg_bin, shim_path)
+                ffmpeg_bin = _prepend_binary_dir(str(shim_path)) or ffmpeg_bin
+            except Exception:
+                pass
+        os.environ["IMAGEIO_FFMPEG_EXE"] = ffmpeg_bin
+        os.environ["FFMPEG_BINARY"] = ffmpeg_bin
+    return ollama_url, ollama_bin, sox_bin
+
+
+def _ollama_is_running(ollama_url: str) -> bool:
+    try:
+        response = requests.get(f"{ollama_url}/api/tags", timeout=3)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def _ensure_ollama_running(ollama_url: str, ollama_bin: str | None) -> bool:
+    if _ollama_is_running(ollama_url):
+        return True
+    if not ollama_bin:
+        return False
+
+    try:
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        subprocess.Popen(
+            [ollama_bin, "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+    except Exception as exc:
+        logger.warning("Unable to start Ollama automatically from %s: %s", ollama_bin, exc)
+        return False
+
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if _ollama_is_running(ollama_url):
+            return True
+        time.sleep(0.5)
+    return False
 
 
 def _player_stat_vaep_total(stat: PlayerStats) -> float:
@@ -153,15 +226,17 @@ async def generate_commentary(match_id: int):
         
         # Extract commentary logic to sync thread
         def run_sync_pipeline():
+            ollama_url, ollama_bin, _ = _configure_external_tools()
+            _ensure_ollama_running(ollama_url, ollama_bin)
+
             # Patch paths to make models work regardless of CWD
             base_dir = os.path.dirname(os.path.abspath(tac.__file__))
             tac.TAC_MODELFILE = os.path.join(base_dir, "Tacticalmodel", "Modelfile")
             pbp.PBP_MODELFILE = os.path.join(base_dir, "PbpModel", "Modelfile")
             
             # Point to local ollama endpoint if configured
-            ollama_url = getattr(settings, "OLLAMA_URL", "http://localhost:11434")
             tac.OLLAMA_URL = f"{ollama_url}/api/chat"
-            pbp.OLLAMA_URL = f"{ollama_url}/api/chat"
+            pbp.OLLAMA_URL = ollama_url
             pbp.OLLAMA_GENERATE_URL = f"{ollama_url}/api/generate"
             pbp.OLLAMA_TAGS_URL = f"{ollama_url}/api/tags"
             

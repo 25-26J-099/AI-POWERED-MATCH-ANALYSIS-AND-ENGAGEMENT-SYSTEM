@@ -14,11 +14,13 @@ Usage:
 """
 
 import copy
+import glob
 import json
 import math
 import os
 import random
 import re
+import shutil
 import sys
 import tempfile
 import threading
@@ -70,6 +72,75 @@ MIN_AUDIO_GAP_SECONDS = 0.30           # Minimum gap between any two audio clips
 
 TEMP_DIR = os.path.join(tempfile.gettempdir(), "merged_commentary")
 os.makedirs(TEMP_DIR, exist_ok=True)
+
+
+def _prepend_binary_dir(binary_path):
+    if not binary_path or not os.path.isfile(binary_path):
+        return None
+    binary_dir = os.path.dirname(os.path.abspath(binary_path))
+    path_parts = os.environ.get("PATH", "").split(os.pathsep)
+    if binary_dir not in path_parts:
+        os.environ["PATH"] = binary_dir + os.pathsep + os.environ.get("PATH", "")
+    return os.path.abspath(binary_path)
+
+
+def _resolve_binary(executable_name, env_name, candidate_paths=None):
+    configured = _prepend_binary_dir(os.environ.get(env_name))
+    if configured:
+        return configured
+
+    found = shutil.which(executable_name)
+    if found:
+        _prepend_binary_dir(found)
+        return found
+
+    for candidate in candidate_paths or []:
+        for path in glob.glob(os.path.expandvars(os.path.expanduser(candidate))):
+            resolved = _prepend_binary_dir(path)
+            if resolved:
+                return resolved
+    return None
+
+
+def configure_external_audio_tools():
+    """Make SoX/ffmpeg discoverable even when Uvicorn starts from a stale PATH."""
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
+    sox_candidates = [
+        os.path.join(local_appdata, "Microsoft", "WinGet", "Packages", "ChrisBagwell.SoX_*", "sox-*", "sox.exe"),
+        r"C:\Program Files*\sox*\sox.exe",
+    ]
+    ffmpeg_candidates = [
+        os.path.join(SCRIPT_DIR, ".venv", "Lib", "site-packages", "imageio_ffmpeg", "binaries", "ffmpeg*.exe"),
+        os.path.join(SCRIPT_DIR, ".venv", "lib", "site-packages", "imageio_ffmpeg", "binaries", "ffmpeg*.exe"),
+    ]
+
+    sox_path = _resolve_binary("sox", "SOX_BINARY", sox_candidates)
+
+    ffmpeg_path = os.environ.get("IMAGEIO_FFMPEG_EXE") or _resolve_binary("ffmpeg", "FFMPEG_BINARY", ffmpeg_candidates)
+    if not ffmpeg_path:
+        try:
+            import imageio_ffmpeg
+
+            ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            ffmpeg_path = None
+    if ffmpeg_path:
+        _prepend_binary_dir(ffmpeg_path)
+        if os.path.basename(ffmpeg_path).lower() != "ffmpeg.exe":
+            shim_dir = os.path.join(TEMP_DIR, "bin")
+            os.makedirs(shim_dir, exist_ok=True)
+            shim_path = os.path.join(shim_dir, "ffmpeg.exe")
+            try:
+                if not os.path.exists(shim_path) or os.path.getsize(shim_path) != os.path.getsize(ffmpeg_path):
+                    shutil.copy2(ffmpeg_path, shim_path)
+                ffmpeg_path = shim_path
+            except Exception:
+                pass
+            _prepend_binary_dir(ffmpeg_path)
+        os.environ["IMAGEIO_FFMPEG_EXE"] = ffmpeg_path
+        os.environ["FFMPEG_BINARY"] = ffmpeg_path
+
+    return sox_path, ffmpeg_path
 
 
 # ─────────────────────────────────────────────────────────────
@@ -218,6 +289,17 @@ def stitch_pbp_lines(lines):
 def _build_climax_llm_prompt(flattened_stream, intensity, anchor_event, is_goal):
     """LLM prompt for climax anchor with relaxed word limit."""
     parts = [f"Intensity: {intensity}"]
+    allowed_names = sorted(pbp.collect_allowed_names([anchor_event]))
+    if allowed_names:
+        parts.append(
+            "[NAME RULE: Use only names that appear in the event stream. "
+            f"Allowed exact names for this anchor: {', '.join(allowed_names)}. "
+            "Do not invent real player names. If the data says Player 17, say Player 17.]"
+        )
+    parts.append(
+        "[FACT RULE: Describe only the action and outcome present in the event stream. "
+        "Do not invent corners, crosses, goals, assists, empty nets, saves, or fouls unless they are explicitly shown.]"
+    )
     if is_goal:
         parts.append(
             "[SYSTEM INSTRUCTION: This is a GOAL. Generate a short, explosive, "
@@ -280,7 +362,7 @@ def build_climax_phase_timeline(events, threesixty_lookup, base_ts, climax_event
             a_id = anchor_event.get("id")
             phase_event_ids.add(a_id)
             line = pbp.generate_template_commentary(events, anchor_idx, {"reason": reason})
-            line = pbp.enforce_surname_only(line, events).strip()
+            line = pbp.ensure_allowed_commentary_names(line, events, anchor_idx, {"reason": reason})
             if line:
                 commentary_lines.append(line)
             if a_ts < t_start:
@@ -299,11 +381,22 @@ def build_climax_phase_timeline(events, threesixty_lookup, base_ts, climax_event
                 )
                 prompt = _build_climax_llm_prompt(flattened, intensity, cx_event, is_goal)
                 climax_line = pbp.generate_commentary(prompt)
+                climax_line = pbp.ensure_allowed_commentary_names(
+                    climax_line,
+                    events,
+                    cx_idx,
+                    {"reason": "goal" if is_goal else "shot"},
+                )
             else:
                 climax_line = pbp.generate_template_commentary(
                     events, cx_idx, {"reason": "goal" if is_goal else "shot"}
                 )
-            climax_line = pbp.enforce_surname_only(climax_line, events).strip()
+                climax_line = pbp.ensure_allowed_commentary_names(
+                    climax_line,
+                    events,
+                    cx_idx,
+                    {"reason": "goal" if is_goal else "shot"},
+                )
             if climax_line:
                 commentary_lines.append(climax_line)
 
@@ -427,6 +520,7 @@ def build_tactical_timeline(
             event_id_to_event[eid] = ev
 
     entries = []
+    deferred_climax_zone_items = []
     spatial_count = 0
     last_spatial_ts = -TAC_SPATIAL_COOLDOWN_SECONDS
     clip_duration = tac.get_clip_duration_seconds(events)
@@ -454,6 +548,8 @@ def build_tactical_timeline(
             )
             if in_climax_zone:
                 print(f"  [TAC SKIP - CLIMAX ZONE] {target_id} @ {video_ts:.1f}s")
+                if reason.startswith("spatial_"):
+                    deferred_climax_zone_items.append(item)
                 continue
 
         # Spatial cooldown
@@ -484,6 +580,12 @@ def build_tactical_timeline(
             team_name=result.get("team"),
         )
         print(f"    Done ({len(commentary)} chars)")
+        if not pbp.commentary_uses_only_allowed_names(commentary, events):
+            commentary = tac.build_spatial_commentary_fallback(
+                level,
+                result.get("tactical_labels") or {},
+                team_name=result.get("team"),
+            )
 
         if is_spatial and not is_high_value_setpiece:
             spatial_count += 1
@@ -499,6 +601,45 @@ def build_tactical_timeline(
             "is_foul": result.get("is_foul", False),
             "event": event,
         })
+
+    if not entries and deferred_climax_zone_items:
+        item = deferred_climax_zone_items[0]
+        target_id = item["event_id"]
+        event = event_id_to_event.get(target_id)
+        if event is not None:
+            video_ts = event_video_seconds(event, base_ts)
+            reason = item.get("selection_reason", "spatial_midfield_dense_frame")
+            print(f"  [TAC FORCE - SHORT CLIP] {target_id} @ {video_ts:.1f}s")
+            result = tac.process_event(
+                event,
+                events,
+                threesixty_lookup,
+                selection_reason=reason,
+                source_event_id=item.get("source_event_id"),
+            )
+            commentary = tac.generate_commentary_ollama(
+                result["tactical_description"],
+                level,
+                selection_reason=result.get("selection_reason", "auto"),
+                tactical_labels=result.get("tactical_labels"),
+                team_name=result.get("team"),
+            )
+            if not pbp.commentary_uses_only_allowed_names(commentary, events):
+                commentary = tac.build_spatial_commentary_fallback(
+                    level,
+                    result.get("tactical_labels") or {},
+                    team_name=result.get("team"),
+                )
+            entries.append({
+                "video_ts": video_ts,
+                "commentator": "tactical",
+                "text": commentary,
+                "event_id": target_id,
+                "selection_reason": reason,
+                "is_goal": result.get("is_goal", False),
+                "is_foul": result.get("is_foul", False),
+                "event": event,
+            })
 
     print(f"  Tactical pipeline produced {len(entries)} entries.")
     return entries
@@ -548,10 +689,21 @@ def build_pbp_timeline(events, threesixty_lookup, base_ts, subsumed_ids=None):
             flattened = pbp.build_flattened_stream(context_events, anchor_event, a, idx_360)
             prompt = pbp.build_prompt(flattened, intensity, anchor_event)
             commentary = pbp.generate_commentary(prompt)
+            commentary = pbp.ensure_allowed_commentary_names(
+                commentary,
+                events,
+                anchor_idx,
+                {"reason": reason},
+            )
         else:
             commentary = pbp.generate_template_commentary(events, anchor_idx, {"reason": reason})
+            commentary = pbp.ensure_allowed_commentary_names(
+                commentary,
+                events,
+                anchor_idx,
+                {"reason": reason},
+            )
 
-        commentary = pbp.enforce_surname_only(commentary, events).strip()
         if not commentary:
             continue
 
@@ -626,6 +778,8 @@ def merge_timelines(tac_entries, pbp_entries):
     for entry in pbp_entries:
         ts = entry["video_ts"]
         excluded = any(start <= ts <= end for start, end in pbp_exclude_ranges)
+        if excluded and (entry.get("is_climax_phase") or entry.get("is_goal") or entry.get("is_foul")):
+            excluded = False
         if excluded:
             print(f"  [PBP EXCLUDED] {entry['event_id']} at {ts:.1f}s — "
                   f"within tactical exclusion zone")
@@ -642,6 +796,12 @@ def merge_timelines(tac_entries, pbp_entries):
                   f"PBP has priority (penalty area)")
             continue
         filtered_tac.append(entry)
+
+    if not filtered_tac and tac_entries:
+        forced = dict(tac_entries[0])
+        forced["video_ts"] = max(0.0, forced["video_ts"] - 1.5)
+        print(f"  [TAC FORCE - MERGE] Keeping tactical entry {forced['event_id']} for coverage")
+        filtered_tac.append(forced)
 
     # ── Step 6: Combine and sort by timestamp ──
     combined = filtered_tac + filtered_pbp
@@ -696,7 +856,13 @@ def generate_tts_audio(timeline, progress_callback=None):
     import wave
     import torch
     import soundfile as sf
-    from qwen_tts import Qwen3TTSModel
+    configure_external_audio_tools()
+    import contextlib
+    import io
+
+    # qwen_tts prints a flash-attn advisory on Windows; CUDA still runs with PyTorch SDPA.
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        from qwen_tts import Qwen3TTSModel
 
     # Reference text transcripts for each voice sample (needed for high-quality cloning)
     REF_TEXTS = {
@@ -866,12 +1032,14 @@ def compose_video_with_commentary(timeline, progress_callback=None):
     if progress_callback:
         progress_callback("Composing video with commentary...")
 
+    _, ffmpeg_path = configure_external_audio_tools()
     from moviepy import VideoFileClip, AudioFileClip
     from pydub import AudioSegment
     import imageio_ffmpeg
     # Point pydub to the ffmpeg bundled with imageio_ffmpeg
-    AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
-    AudioSegment.ffprobe = imageio_ffmpeg.get_ffmpeg_exe()
+    ffmpeg_path = ffmpeg_path or imageio_ffmpeg.get_ffmpeg_exe()
+    AudioSegment.converter = ffmpeg_path
+    AudioSegment.ffprobe = ffmpeg_path
 
     video = VideoFileClip(VIDEO_FILE)
     video_duration = video.duration

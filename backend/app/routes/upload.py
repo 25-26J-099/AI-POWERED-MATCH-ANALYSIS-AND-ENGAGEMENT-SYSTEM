@@ -21,6 +21,18 @@ from app.services.team_color_service import detect_team_colors_preview
 router = APIRouter()
 
 ALLOWED_COMMENTARY_LEVELS = ("Beginner", "Intermediate", "Expert", *AUTO_COMMENTARY_LEVELS)
+_TEAM_COLOR_DETECTION_SEMAPHORE = asyncio.Semaphore(max(1, settings.TEAM_COLOR_DETECTION_MAX_CONCURRENCY))
+_TEAM_COLOR_MATCH_LOCKS: dict[int, asyncio.Lock] = {}
+_TEAM_COLOR_MATCH_LOCKS_GUARD = asyncio.Lock()
+
+
+async def _get_team_color_match_lock(match_id: int) -> asyncio.Lock:
+    async with _TEAM_COLOR_MATCH_LOCKS_GUARD:
+        lock = _TEAM_COLOR_MATCH_LOCKS.get(match_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _TEAM_COLOR_MATCH_LOCKS[match_id] = lock
+        return lock
 
 
 class TeamMappingRequest(BaseModel):
@@ -132,43 +144,47 @@ async def upload_video(
 @router.post("/match/{match_id}/detect-team-colors")
 async def detect_team_colors(match_id: int, db: AsyncSession = Depends(get_db)):
     """Detect anonymous team kit colors before the user assigns real team names."""
-    result = await db.execute(select(Match).where(Match.id == match_id))
-    match = result.scalar_one_or_none()
-    if not match:
-        raise HTTPException(status_code=404, detail="Match not found")
-    if not match.video_path:
-        raise HTTPException(status_code=404, detail="Match has no uploaded video")
-    if match.status not in ("team_mapping_pending", "lineup_pending"):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Team color detection is not available while match status is {match.status}.",
-        )
+    match_lock = await _get_team_color_match_lock(match_id)
 
-    artifacts = dict(match.tracking_artifacts or {})
-    existing_colors = artifacts.get("team_colors")
-    if isinstance(existing_colors, list) and existing_colors:
-        return {"match_id": match.id, "team_colors": existing_colors}
+    async with match_lock:
+        result = await db.execute(select(Match).where(Match.id == match_id))
+        match = result.scalar_one_or_none()
+        if not match:
+            raise HTTPException(status_code=404, detail="Match not found")
+        if not match.video_path:
+            raise HTTPException(status_code=404, detail="Match has no uploaded video")
+        if match.status not in ("team_mapping_pending", "lineup_pending"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Team color detection is not available while match status is {match.status}.",
+            )
 
-    try:
-        team_colors = await asyncio.to_thread(detect_team_colors_preview, match.video_path)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"Team color detection failed: {exc}") from exc
+        artifacts = dict(match.tracking_artifacts or {})
+        existing_colors = artifacts.get("team_colors")
+        if isinstance(existing_colors, list) and existing_colors:
+            return {"match_id": match.id, "team_colors": existing_colors}
 
-    if len(team_colors) < 2:
-        raise HTTPException(
-            status_code=422,
-            detail="Could not confidently detect two team colors from this video. Try a clearer clip or continue with manual lineup names.",
-        )
+        try:
+            async with _TEAM_COLOR_DETECTION_SEMAPHORE:
+                team_colors = await asyncio.to_thread(detect_team_colors_preview, match.video_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"Team color detection failed: {exc}") from exc
 
-    artifacts["team_colors"] = team_colors
-    match.tracking_artifacts = artifacts
-    match.status = "team_mapping_pending"
-    match.status_detail = "Team colors detected. Waiting for team name mapping..."
-    await db.commit()
+        if len(team_colors) < 2:
+            raise HTTPException(
+                status_code=422,
+                detail="Could not confidently detect two team colors from this video. Try a clearer clip or continue with manual lineup names.",
+            )
 
-    return {"match_id": match.id, "team_colors": team_colors}
+        artifacts["team_colors"] = team_colors
+        match.tracking_artifacts = artifacts
+        match.status = "team_mapping_pending"
+        match.status_detail = "Team colors detected. Waiting for team name mapping..."
+        await db.commit()
+
+        return {"match_id": match.id, "team_colors": team_colors}
 
 
 @router.post("/match/{match_id}/team-mapping")

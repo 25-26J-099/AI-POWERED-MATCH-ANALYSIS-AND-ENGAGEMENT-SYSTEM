@@ -63,12 +63,14 @@ class MLEventDetector:
         ])
         
         # Inference configuration
-        self.confidence_threshold = 0.6
-        self.inference_interval = 5  # Run every N frames
+        ml_cfg = getattr(config, "ml_model", config)
+        self.confidence_threshold = float(getattr(ml_cfg, "ml_confidence_threshold", 0.6))
+        self.inference_interval = max(1, int(getattr(ml_cfg, "ml_inference_interval", 5)))
         self.frame_count = 0
         
         logger.info(f"[ML Detector] Loaded on {self.device}")
         logger.info(f"[ML Detector] Temporal window: {self.temporal_window} frames")
+        logger.info(f"[ML Detector] Inference interval: every {self.inference_interval} frames")
         logger.info(f"[ML Detector] Event classes: {len(self.class_names)}")
     
     def _load_model(self, weights_path: str):
@@ -217,7 +219,8 @@ class HybridEventSystem:
         self.config = config
         
         # Event fusion settings
-        self.ml_confidence_threshold = 0.7
+        ml_cfg = getattr(config, "ml_model", config)
+        self.ml_confidence_threshold = float(getattr(ml_cfg, "ml_confidence_threshold", 0.7))
         self.event_cooldown = 30  # Frames between same ML events
         self.last_ml_events = {}  # Track recent ML events
         

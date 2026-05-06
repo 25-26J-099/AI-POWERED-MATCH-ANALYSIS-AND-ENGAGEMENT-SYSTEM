@@ -60,11 +60,26 @@ class Settings(BaseSettings):
     VASTAI_API_KEY: Optional[str] = Field(default=None, description="vast.ai API key")
     RUNPOD_API_KEY: Optional[str] = Field(default=None, description="runpod API key")
     FORCE_CPU: bool = Field(default=False, description="Force CPU even if CUDA is available")
+    PREPROCESSING_ENABLE_SUPER_RESOLUTION: bool = Field(
+        default=False,
+        description="Enable OpenCV super-resolution preprocessing. Disabled by default for API runs because it is CPU-bound and very slow after resizing back to the original frame size.",
+    )
+    ANALYSIS_MAX_INPUT_WIDTH: int = Field(default=960, description="Maximum analysis-frame width for the tracking pipeline")
+    ANALYSIS_MAX_INPUT_HEIGHT: int = Field(default=540, description="Maximum analysis-frame height for the tracking pipeline")
 
     REID_BACKEND_PRIORITY: str = Field(
         default="fastreid,torchreid,handcrafted",
         description="Comma-separated Re-ID backend priority list",
     )
+    REID_EMBEDDING_UPDATE_INTERVAL: int = Field(
+        default=5,
+        description="Extract Re-ID appearance embeddings every N frames per active track.",
+    )
+    REID_ENABLE_LEGACY_GALLERY: bool = Field(
+        default=False,
+        description="Enable the legacy gallery Re-ID pass in addition to robust Re-ID.",
+    )
+    ML_EVENT_INFERENCE_INTERVAL: int = Field(default=10, description="Run ML event inference every N frames")
     FASTREID_ENABLED: bool = Field(default=True, description="Allow FastReID backend initialization")
     FASTREID_STRICT: bool = Field(
         default=False,
@@ -73,6 +88,14 @@ class Settings(BaseSettings):
     FASTREID_DEVICE: str = Field(
         default="auto",
         description="Preferred FastReID device: auto, cpu, or cuda",
+    )
+    TORCHREID_DEVICE: str = Field(
+        default="cuda",
+        description="Preferred torchreid device: auto, cpu, or cuda. Defaults to CUDA for GPU-first re-identification when supported.",
+    )
+    TORCHREID_ALLOW_CPU: bool = Field(
+        default=False,
+        description="Allow torchreid to run on CPU. Disabled by default because it is too slow for live match processing compared with the handcrafted fallback.",
     )
     FASTREID_CONFIG_PATH: str = Field(
         default="./models/reid/fastreid/configs/football_vit.yml",
@@ -89,6 +112,18 @@ class Settings(BaseSettings):
     GNN_K_NEIGHBORS: int = Field(default=4, description="k for k-nearest-neighbor graph construction")
     GNN_RADIUS: float = Field(default=18.0, description="Radius used when GNN_EDGE_STRATEGY=radius")
     GNN_DEVICE: str = Field(default="cpu", description="Device for tactical GNN inference: cpu, cuda, or auto")
+    OCR_ENABLE: bool = Field(
+        default=True,
+        description="Enable jersey-number OCR during tracking.",
+    )
+    OCR_USE_GPU: bool = Field(
+        default=True,
+        description="Allow EasyOCR jersey-number recognition to use CUDA when available.",
+    )
+    OCR_UPDATE_INTERVAL: int = Field(
+        default=10,
+        description="Run jersey OCR every N frames per track.",
+    )
     GNN_CONFIDENCE_THRESHOLD: float = Field(default=0.4, description="Confidence threshold before emitting unknown tactical labels")
     GNN_USE_HEURISTIC_FALLBACK: bool = Field(default=True, description="Fall back to heuristic tactical analysis when GNN inference is unavailable")
 
@@ -96,6 +131,10 @@ class Settings(BaseSettings):
     COMMENTARY_VERBOSITY: str = Field(default="medium", description="Default commentary verbosity: low, medium, or high")
     COMMENTARY_EDUCATIONAL_MODE: bool = Field(default=False, description="Default educational mode for commentary")
     COMMENTARY_STYLE: str = Field(default="neutral", description="Default commentary tone/style")
+    OLLAMA_URL: str = Field(default="http://localhost:11434", description="Base URL for the local Ollama server")
+    OLLAMA_BINARY: Optional[str] = Field(default=None, description="Optional absolute path to ollama.exe")
+    SOX_BINARY: Optional[str] = Field(default=None, description="Optional absolute path to sox.exe for Qwen TTS")
+    FFMPEG_BINARY: Optional[str] = Field(default=None, description="Optional absolute path to ffmpeg.exe for audio/video composition")
     COMMENTARY_AUDIENCE_MODEL_PATH: str = Field(
         default="./app/commentary/audience_model.json",
         description="Path to the learned audience-model bundle used for automatic commentary-level inference",
@@ -119,6 +158,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_WINDOW_SECONDS: int = Field(
         default=60,
         description="Rolling rate-limit window size in seconds",
+    )
+    TEAM_COLOR_DETECTION_MAX_CONCURRENCY: int = Field(
+        default=1,
+        description="Maximum number of concurrent team-color preview jobs allowed across the backend.",
     )
     SECURITY_ENABLE_HEADERS: bool = Field(
         default=True,

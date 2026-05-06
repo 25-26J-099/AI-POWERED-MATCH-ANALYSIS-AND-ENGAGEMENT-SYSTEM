@@ -55,7 +55,7 @@ class MatchAnalysisPipeline:
         self.tracker = PlayerBallTracker(config)
         self.team_assigner = TeamAssigner(config)
         self.jersey_ocr = JerseyOCR(config)
-        self.reid_module = PlayerReIDModule(config)
+        self.reid_module = PlayerReIDModule(config) if config.reid.enable_legacy_gallery else None
         self.robust_reid = RobustReIDSystem(config)
         self.event_detector = StrategicHybridEventDetector(config)
         self.statsbomb_exporter = StatsBombExporter()
@@ -275,8 +275,8 @@ class MatchAnalysisPipeline:
                 # Module 2.5: ROBUST RE-ID - Map ByteTrack IDs to Stable IDs
                 player_tracks = self.robust_reid.process_frame(frame, player_tracks, frame_idx)
 
-                # Module 3: Re-ID (legacy, kept for lost track gallery)
-                if self.config.reid.enable and self._team_fitted:
+                # Module 3: Optional legacy Re-ID gallery. RobustReIDSystem is the primary ID mapper.
+                if self.config.reid.enable and self.config.reid.enable_legacy_gallery and self._team_fitted:
                     lost = self.tracker.get_lost_tracks()
                     self.reid_module.update_gallery(
                         frame, player_tracks, lost, frame_idx

@@ -207,6 +207,7 @@ class RobustReIDSystem:
         self.combined_threshold = config.reid.combined_threshold
         self.embedding_history_size = config.reid.embedding_history_size
         self.max_embedding_history = config.reid.max_embedding_history
+        self.embedding_update_interval = max(1, int(getattr(config.reid, "embedding_update_interval", 5)))
         self.use_team_constraint = config.reid.use_team_constraint
 
         self.id_buffer: Dict[int, deque[int]] = {}
@@ -313,8 +314,15 @@ class RobustReIDSystem:
         for det_id, track in tracks.items():
             if track.is_ball or track.is_referee:
                 continue
-            crop = self.reid_model.crop_player(frame, track.bbox)
-            detection_embeddings[det_id] = self.reid_model.extract_embedding(crop)
+            should_update_embedding = (
+                frame_idx % self.embedding_update_interval == 0
+                or getattr(track, "frames_tracked", 0) <= 2
+            )
+            if should_update_embedding:
+                crop = self.reid_model.crop_player(frame, track.bbox)
+                detection_embeddings[det_id] = self.reid_model.extract_embedding(crop)
+            else:
+                detection_embeddings[det_id] = None
 
         stable_tracks = {}
         assigned_identity_ids: Set[int] = set()

@@ -197,10 +197,10 @@ def _resolve_feature_order(scaler) -> list[str]:
     return FALLBACK_FEATURE_ORDER
 
 
-def _build_feature_matrix(players_data: List[Dict], scaler) -> tuple[list[int], np.ndarray]:
+def _build_feature_matrix(players_data: List[Dict], scaler) -> tuple[list[int], pd.DataFrame]:
     rows = [_player_row(player) for player in players_data]
     if not rows:
-        return [], np.empty((0, 0))
+        return [], pd.DataFrame()
 
     feature_order = _resolve_feature_order(scaler)
     valid_player_ids = [int(row.pop("player_id")) for row in rows]
@@ -223,7 +223,7 @@ def _build_feature_matrix(players_data: List[Dict], scaler) -> tuple[list[int], 
         if frame.shape[1] != expected:
             raise ValueError(f"Style feature mismatch: built {frame.shape[1]} features but scaler expects {expected}")
 
-    return valid_player_ids, frame.to_numpy(dtype=np.float32)
+    return valid_player_ids, frame.astype(np.float32)
 
 
 def compute_embeddings(players_data: List[Dict]) -> List[Dict]:
@@ -235,7 +235,8 @@ def compute_embeddings(players_data: List[Dict]) -> List[Dict]:
     if scaler is not None:
         X_scaled = scaler.transform(X)
     else:
-        X_scaled = (X - X.mean(axis=0)) / (X.std(axis=0) + 1e-8)
+        X_np = X.to_numpy(dtype=np.float32)
+        X_scaled = (X_np - X_np.mean(axis=0)) / (X_np.std(axis=0) + 1e-8)
 
     if autoencoder is not None:
         import torch

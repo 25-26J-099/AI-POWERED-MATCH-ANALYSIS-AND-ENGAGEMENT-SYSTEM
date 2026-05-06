@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from typing import Optional
 
 import pandas as pd
@@ -101,7 +102,13 @@ def compute_xg(event: dict) -> float:
     model = load_xg_model()
     if model is not None:
         try:
-            xg_value = float(model.predict_proba(X)[0][1])
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="X does not have valid feature names.*",
+                    category=UserWarning,
+                )
+                xg_value = float(model.predict_proba(X)[0][1])
             return min(max(xg_value, 0.0), 1.0)
         except Exception:
             pass

@@ -97,16 +97,13 @@ class YOLODetector:
 
     def initialize(self):
         """Load detection model with automatic backend selection."""
+        if self._initialized:
+            return
+
         # Try ultralytics first
         try:
             from ultralytics import YOLO
-            device = self.cfg.device
-            if device == "auto":
-                try:
-                    import torch
-                    device = "cuda" if torch.cuda.is_available() else "cpu"
-                except ImportError:
-                    device = "cpu"
+            device = self._resolve_device()
 
             logger.info(f"Loading YOLO model: {self.cfg.model_name} on {device}")
             self.model = YOLO(self.cfg.model_name)
@@ -144,6 +141,43 @@ class YOLODetector:
         self._backend = "opencv_hog"
         self._initialized = True
         logger.info("[OK] Using OpenCV HOG + contour-based fallback detector")
+
+    def _resolve_device(self) -> str:
+        preferred = str(getattr(self.cfg, "device", "auto") or "auto").lower()
+        if preferred not in {"auto", "cpu", "cuda"}:
+            preferred = "auto"
+
+        if preferred == "cpu":
+            return "cpu"
+
+        try:
+            import torch
+        except ImportError:
+            return "cpu"
+
+        if not torch.cuda.is_available():
+            return "cpu"
+
+        capability = torch.cuda.get_device_capability(0)
+        sm_tag = f"sm_{capability[0]}{capability[1]}"
+        arch_list = set(torch.cuda.get_arch_list())
+        cuda_supported = sm_tag in arch_list
+
+        if preferred == "cuda" and not cuda_supported:
+            logger.warning(
+                "CUDA was requested but the installed PyTorch build does not support GPU arch %s. Falling back to CPU.",
+                sm_tag,
+            )
+            return "cpu"
+
+        if preferred == "auto" and not cuda_supported:
+            logger.warning(
+                "CUDA is available but the installed PyTorch build does not support GPU arch %s. Falling back to CPU.",
+                sm_tag,
+            )
+            return "cpu"
+
+        return "cuda"
 
     def _detect_ultralytics(self, frame: np.ndarray) -> List[Detection]:
         """
@@ -739,9 +773,9 @@ class PlayerBallTracker:
     v4: Uses robust Kalman-filter-based ball tracker for temporal consistency.
     """
 
-    def __init__(self, config):
+    def __init__(self, config, detector: Optional[YOLODetector] = None):
         self.config = config
-        self.detector = YOLODetector(config)
+        self.detector = detector or YOLODetector(config)
         self.tracker = ByteTrackTracker(config)
         self.ball_tracker = BallTracker(config)  # New robust ball tracker
         self.player_tracks: Dict[int, Track] = {}

@@ -451,40 +451,50 @@ def build_commentary_plan(events, threesixty_lookup):
 
     # Optional one-off spatial analysis event.
     sequence_duration = get_clip_duration_seconds(events)
-    skip_spatial = has_goal and sequence_duration <= SHORT_SEQUENCE_SECONDS
-    if not skip_spatial:
-        ranked_candidates = rank_spatial_event_candidates(events, threesixty_lookup, excluded_ids)
-        for idx in ranked_candidates:
-            candidate = events[idx]
-            candidate_id = get_event_id(candidate)
-            selected_event = candidate
-            selected_id = candidate_id
-            selection_reason = "spatial_midfield_dense_frame"
-            source_event_id = candidate_id
+    ranked_candidates = rank_spatial_event_candidates(events, threesixty_lookup, excluded_ids)
+    fallback_pre_goal_candidate = None
+    for idx in ranked_candidates:
+        candidate = events[idx]
+        candidate_id = get_event_id(candidate)
+        selected_event = candidate
+        selected_id = candidate_id
+        selection_reason = "spatial_midfield_dense_frame"
+        source_event_id = candidate_id
 
-            if is_corner_or_free_kick_event(candidate):
-                prior_idx = choose_pre_set_piece_spatial_index(
-                    events, threesixty_lookup, idx, excluded_ids
-                )
-                if prior_idx is None:
-                    continue
-                selected_event = events[prior_idx]
-                selected_id = get_event_id(selected_event)
-                selection_reason = "spatial_5s_before_set_piece"
-
-            if selected_event and is_event_within_pre_goal_window(selected_event, goal_times):
+        if is_corner_or_free_kick_event(candidate):
+            prior_idx = choose_pre_set_piece_spatial_index(
+                events, threesixty_lookup, idx, excluded_ids
+            )
+            if prior_idx is None:
                 continue
+            selected_event = events[prior_idx]
+            selected_id = get_event_id(selected_event)
+            selection_reason = "spatial_5s_before_set_piece"
 
-            if selected_id and selected_id not in excluded_ids:
-                plan.append(
-                    {
-                        "event_id": selected_id,
-                        "selection_reason": selection_reason,
-                        "source_event_id": source_event_id,
-                    }
-                )
-                excluded_ids.add(selected_id)
-                break
+        if selected_event and is_event_within_pre_goal_window(selected_event, goal_times):
+            if fallback_pre_goal_candidate is None and sequence_duration <= SHORT_SEQUENCE_SECONDS:
+                fallback_pre_goal_candidate = {
+                    "event_id": selected_id,
+                    "selection_reason": selection_reason,
+                    "source_event_id": source_event_id,
+                }
+            continue
+
+        if selected_id and selected_id not in excluded_ids:
+            plan.append(
+                {
+                    "event_id": selected_id,
+                    "selection_reason": selection_reason,
+                    "source_event_id": source_event_id,
+                }
+            )
+            excluded_ids.add(selected_id)
+            break
+
+    has_spatial = any(str(item.get("selection_reason", "")).startswith("spatial_") for item in plan)
+    if not has_spatial and fallback_pre_goal_candidate and fallback_pre_goal_candidate["event_id"] not in excluded_ids:
+        plan.append(fallback_pre_goal_candidate)
+        excluded_ids.add(fallback_pre_goal_candidate["event_id"])
 
     # Keep final processing in event timeline order.
     id_to_index = {}
@@ -894,6 +904,12 @@ def generate_commentary_ollama(
     """Call the Ollama API and return the generated commentary."""
     is_spatial_snapshot = str(selection_reason).startswith("spatial_")
     tactical_labels = tactical_labels or {}
+    allowed_names = [name for name in (team_name,) if name]
+    name_rule = (
+        "Name rule: Use only names explicitly provided in this prompt. "
+        f"Allowed exact names: {', '.join(allowed_names) if allowed_names else 'none'}. "
+        "Do not invent real footballer names."
+    )
 
     if is_spatial_snapshot:
         user_content = (
@@ -901,6 +917,7 @@ def generate_commentary_ollama(
             "Task: Generate commentary for a tactical freeze-frame.\n"
             "Focus only on spatial/team-structure interpretation from this snapshot.\n"
             "Do not invent unrelated actions, players, or outcomes.\n\n"
+            f"{name_rule}\n"
             f"Possession Team: {team_name or 'The possession side'}\n"
             "Use the possession team name directly in the commentary.\n"
             "Avoid meta phrases like 'this freeze-frame' or 'this snapshot'.\n"
@@ -916,6 +933,7 @@ def generate_commentary_ollama(
     else:
         user_content = (
             f"Level: {level}\n\n"
+            f"{name_rule}\n"
             f"Tactical Description: {tactical_desc}\n"
             f"Metric Context: Stats are not available for this action."
         )

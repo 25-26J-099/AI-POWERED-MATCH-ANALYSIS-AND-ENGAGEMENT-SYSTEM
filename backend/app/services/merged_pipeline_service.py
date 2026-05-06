@@ -127,14 +127,20 @@ async def monitor_tracking_job(match_id: int, tracking_job_id: str) -> None:
         status_detail="Tracking job started. Waiting for StatsBomb event output...",
     )
 
+    last_status: str | None = None
+    poll_count = 0
+
     while True:
         record = job_service.get_job(tracking_job_id)
-        logger.info(
-            "Tracking job poll match_id=%s tracking_job_id=%s status=%s",
-            match_id,
-            tracking_job_id,
-            record.status,
-        )
+        poll_count += 1
+        if record.status != last_status or poll_count % 15 == 0:
+            logger.info(
+                "Tracking job poll match_id=%s tracking_job_id=%s status=%s",
+                match_id,
+                tracking_job_id,
+                record.status,
+            )
+            last_status = record.status
         if record.status == "completed":
             break
         if record.status == "failed":

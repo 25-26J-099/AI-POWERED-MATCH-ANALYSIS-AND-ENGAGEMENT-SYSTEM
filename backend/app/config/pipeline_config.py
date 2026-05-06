@@ -28,7 +28,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 @dataclass
 class PreprocessingConfig:
     enable_stabilization: bool = True
-    enable_super_resolution: bool = True
+    enable_super_resolution: bool = settings.PREPROCESSING_ENABLE_SUPER_RESOLUTION
     sr_model_name: str = "espcn"
     sr_scale_factor: int = 2
     stabilization_smoothing_radius: int = 30
@@ -72,11 +72,11 @@ class TeamAssignmentConfig:
 
 @dataclass
 class OCRConfig:
-    enable: bool = True
+    enable: bool = settings.OCR_ENABLE
     backend: str = "easyocr"
-    use_gpu: bool = True
+    use_gpu: bool = settings.OCR_USE_GPU
     confidence_threshold: float = 0.5
-    update_interval: int = 5
+    update_interval: int = settings.OCR_UPDATE_INTERVAL
     history_size: int = 12
     top_region_ratio: float = 0.55
     resize_scale: float = 4.0
@@ -107,8 +107,12 @@ class OCRConfig:
 @dataclass
 class ReIDConfig:
     enable: bool = True
+    enable_legacy_gallery: bool = settings.REID_ENABLE_LEGACY_GALLERY
+    embedding_update_interval: int = settings.REID_EMBEDDING_UPDATE_INTERVAL
 
     device: str = settings.FASTREID_DEVICE
+    torchreid_device: str = settings.TORCHREID_DEVICE
+    torchreid_allow_cpu: bool = settings.TORCHREID_ALLOW_CPU
     backend_priority: Tuple[str, ...] = tuple(
         backend.strip()
         for backend in settings.REID_BACKEND_PRIORITY.split(",")
@@ -397,7 +401,7 @@ class MLModelConfig:
     enable_ml_detector: bool = False  # Enable ML-based event detection
     ml_device: str = "auto"  # "cuda", "cpu", or "auto"
     ml_confidence_threshold: float = 0.7
-    ml_inference_interval: int = 5  # Run inference every N frames
+    ml_inference_interval: int = settings.ML_EVENT_INFERENCE_INTERVAL  # Run inference every N frames
     
     # Model architecture parameters (must match training)
     num_classes: int = 17

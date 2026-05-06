@@ -52,7 +52,11 @@ class EventDetectionModel(nn.Module):
             else:
                 ssl._create_default_https_context = _create_unverified_https_context
                 
-        resnet = models.resnet18(pretrained=pretrained)
+        try:
+            weights = models.ResNet18_Weights.DEFAULT if pretrained else None
+            resnet = models.resnet18(weights=weights)
+        except AttributeError:
+            resnet = models.resnet18(pretrained=pretrained)
         
         # Remove the final fully connected layer
         # ResNet18 output: [batch, 512, 7, 7] after avgpool

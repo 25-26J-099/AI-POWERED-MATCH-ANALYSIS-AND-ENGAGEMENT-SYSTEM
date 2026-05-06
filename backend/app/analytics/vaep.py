@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from typing import Optional
 
 import pandas as pd
@@ -98,8 +99,14 @@ def compute_vaep(event: dict) -> float:
     scoring_model, conceding_model = load_vaep_models()
     if scoring_model is not None and conceding_model is not None:
         try:
-            p_scoring = float(scoring_model.predict_proba(X)[0][1])
-            p_conceding = float(conceding_model.predict_proba(X)[0][1])
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="X does not have valid feature names.*",
+                    category=UserWarning,
+                )
+                p_scoring = float(scoring_model.predict_proba(X)[0][1])
+                p_conceding = float(conceding_model.predict_proba(X)[0][1])
             return p_scoring - p_conceding
         except Exception:
             pass

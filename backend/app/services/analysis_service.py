@@ -21,8 +21,8 @@ class AnalysisRequestOptions:
     confidence: float = 0.3
     device: str = "auto"
     frame_skip: int = 1
-    max_width: int = 1280
-    max_height: int = 720
+    max_width: int = settings.ANALYSIS_MAX_INPUT_WIDTH
+    max_height: int = settings.ANALYSIS_MAX_INPUT_HEIGHT
     enable_stabilization: bool = True
     enable_reid: bool = True
     enable_events: bool = True

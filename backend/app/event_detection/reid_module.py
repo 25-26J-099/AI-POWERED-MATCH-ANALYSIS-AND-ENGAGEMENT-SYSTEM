@@ -9,8 +9,11 @@ Backend priority:
 from __future__ import annotations
 
 import importlib.util
+import contextlib
+import io
 import logging
 import os
+import warnings
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
@@ -65,6 +68,8 @@ class ReIDModel:
             getattr(config, "backend_priority", ("fastreid", "torchreid", "handcrafted"))
         )
         self.device = self._resolve_device(getattr(config, "device", "auto"))
+        self.torchreid_device = self._resolve_device(getattr(config, "torchreid_device", "cpu"))
+        self.torchreid_allow_cpu = bool(getattr(config, "torchreid_allow_cpu", False))
         self.fastreid_enabled = bool(getattr(config, "fastreid_enabled", True))
         self.strict_fastreid = bool(getattr(config, "strict_fastreid", False))
         self.hf_fastreid_repo = getattr(config, "hf_fastreid_repo", "") or ""
@@ -208,14 +213,23 @@ class ReIDModel:
             return False
 
     def _init_torchreid_backend(self) -> bool:
+        if self.torchreid_device == "cpu" and not self.torchreid_allow_cpu:
+            self._register_backend_attempt(
+                "torchreid",
+                False,
+                "torchreid CPU execution disabled for live pipeline performance",
+            )
+            return False
         if importlib.util.find_spec("torchreid") is None:
             self._register_backend_attempt("torchreid", False, "torchreid package not installed")
             return False
         try:
-            try:
-                from torchreid.utils import FeatureExtractor
-            except ImportError:
-                from torchreid.reid.utils import FeatureExtractor
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Cython evaluation.*", category=UserWarning)
+                try:
+                    from torchreid.utils import FeatureExtractor
+                except ImportError:
+                    from torchreid.reid.utils import FeatureExtractor
 
             torch_cache_dir = (BACKEND_ROOT / "model_cache" / "torch").resolve()
             torch_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -223,13 +237,14 @@ class ReIDModel:
 
             kwargs = {
                 "model_name": self.torchreid_model_name,
-                "device": self.device,
+                "device": self.torchreid_device,
             }
-            if self.resolved_weights_path and self.resolved_weights_path.exists():
-                kwargs["model_path"] = str(self.resolved_weights_path)
-            self.feature_extractor = FeatureExtractor(**kwargs)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Cython evaluation.*", category=UserWarning)
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.feature_extractor = FeatureExtractor(**kwargs)
             self.backend = "torchreid"
-            self.backend_reason = "torchreid initialized successfully"
+            self.backend_reason = f"torchreid initialized successfully on {self.torchreid_device}"
             self._register_backend_attempt("torchreid", True, self.backend_reason)
             return True
         except Exception as exc:  # noqa: BLE001 - backend fallback must be resilient
@@ -369,6 +384,20 @@ class ReIDModel:
                 embedding = embedding[0]
             return embedding.reshape(-1)
         except Exception as exc:  # noqa: BLE001 - inference fallback must be resilient
+            if "cuda" in str(exc).lower():
+                self.feature_extractor = None
+                self.backend = "handcrafted"
+                self.backend_reason = "torchreid CUDA extraction failed; switched to handcrafted fallback"
+                logger.warning(
+                    "[Re-ID] torchreid CUDA extraction failed; disabling torchreid for the rest of the run and using handcrafted fallback: %s",
+                    exc,
+                )
+                if torch is not None and hasattr(torch, "cuda") and torch.cuda.is_available():
+                    try:
+                        torch.cuda.empty_cache()
+                    except Exception:  # noqa: BLE001
+                        pass
+                return self._extract_handcrafted(image)
             logger.warning("[Re-ID] torchreid extraction failed, falling back to handcrafted: %s", exc)
             return self._extract_handcrafted(image)
 
@@ -412,6 +441,7 @@ class ReIDModel:
         return {
             "backend": self.backend,
             "device": self.device,
+            "torchreid_device": self.torchreid_device,
             "available_backends": {
                 "fastreid": importlib.util.find_spec("fastreid") is not None,
                 "torchreid": importlib.util.find_spec("torchreid") is not None,

@@ -31,7 +31,16 @@ From the `backend` directory:
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-windows.txt
+uvicorn app.main:app --reload
+```
+
+On macOS:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-mac.txt
 uvicorn app.main:app --reload
 ```
 
@@ -83,11 +92,7 @@ python -c "import sys; print(sys.executable)"
 
 If your active interpreter does not point into `backend\venv` or `.venv`, fix that before running the pipeline.
 
-Optional Windows dependency installs for the Re-ID path:
-
-```powershell
-pip install -r requirements-fastreid-windows.txt
-```
+The Windows Re-ID extras are included in `requirements-windows.txt`.
 
 If CUDA is unavailable on Windows, keep `FASTREID_DEVICE=cpu` or leave it as `auto`.
 

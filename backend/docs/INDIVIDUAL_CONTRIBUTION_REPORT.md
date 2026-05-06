@@ -73,7 +73,7 @@ There is not yet a compact report that ties proposal objectives to implemented o
 
 ### Reproducibility gap
 
-Environment setup was fragile because `pydantic-settings` was missing from `requirements.txt`. That issue is now documented and patched in the dependency list, but the environment should still be validated on a clean machine.
+Environment setup was fragile because `pydantic-settings` was missing from the dependency list. That issue is now documented and patched in the platform-specific requirements files, but the environment should still be validated on a clean machine.
 
 ## Research-Safe Interpretation of Tactical Results
 

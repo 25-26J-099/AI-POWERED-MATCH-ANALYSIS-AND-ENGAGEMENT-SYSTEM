@@ -44,14 +44,18 @@ STAKE_SCALE = 10.0
 MIN_CANDIDATES = 2
 
 FEATURE_COLS = [
+    # state (10)
     "ball_x", "ball_y", "dist_to_goal", "angle_to_goal",
     "nearest_defender_dist", "num_defenders_close", "opponent_density",
     "defensive_compactness", "nearest_teammate_dist", "defenders_ahead",
+    # action type one-hot (3)
     "type_dribble", "type_pass", "type_shot",
+    # candidate (3)
     "target_x", "target_y", "distance",
+    # opponent (6)
     "cand_nearest_def_dist", "cand_avg_top2_def_dist", "cand_num_defenders_near",
     "cand_num_defenders_in_lane", "cand_min_def_dist_to_lane", "cand_defenders_ahead",
-]
+]  # 22 features — matches trained scaler/model
 
 VALID_EVENT_TYPES = {"Pass", "Carry", "Dribble", "Shot", "Ball Receipt*"}
 
@@ -252,13 +256,17 @@ _NAN_FILLS = {
 
 def _build_feature_row(state: dict, cand: dict, opp: dict) -> list:
     raw = [
+        # state (10)
         state["ball_x"], state["ball_y"], state["dist_to_goal"], state["angle_to_goal"],
         state["nearest_defender_dist"], state["num_defenders_close"], state["opponent_density"],
         state["defensive_compactness"], state["nearest_teammate_dist"], state["defenders_ahead"],
+        # action type one-hot (3)
         1.0 if cand["type_dribble"] else 0.0,
         1.0 if cand["type_pass"] else 0.0,
         1.0 if cand["type_shot"] else 0.0,
+        # candidate (3)
         cand["target_x"], cand["target_y"], cand["distance"],
+        # opponent (6)
         opp["cand_nearest_def_dist"], opp["cand_avg_top2_def_dist"],
         opp["cand_num_defenders_near"], opp["cand_num_defenders_in_lane"],
         opp["cand_min_def_dist_to_lane"], opp["cand_defenders_ahead"],

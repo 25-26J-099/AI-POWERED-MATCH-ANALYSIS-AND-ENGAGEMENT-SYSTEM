@@ -93,7 +93,7 @@ def predict_success_probability(X_array: np.ndarray) -> np.ndarray:
 def _heuristic(X: np.ndarray) -> np.ndarray:
     """Rule-based P(success) proxy.
 
-    Feature column index reference (matches FEATURE_COLS in decision_quality.py):
+    Feature column indices (22 features, matches FEATURE_COLS in decision_quality.py):
       0  ball_x                     11 type_pass
       1  ball_y                     12 type_shot
       2  dist_to_goal               13 target_x

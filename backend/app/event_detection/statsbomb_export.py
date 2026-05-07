@@ -280,14 +280,16 @@ class StatsBombExporter:
         recipient_location = self._freeze_frame_player_location(freeze_frame, recipient_id)
         ball_location = self._freeze_frame_ball_location(freeze_frame)
         start_location = self._last_player_locations.get(player_id) or current_actor_location
-        end_location = recipient_location or ball_location or default_location
+        # Do NOT fall back to default_location yet — that would make end ≈ start → xT delta ≈ 0.
+        # Instead let the distance-based estimator below run when freeze frame is absent.
+        end_location = recipient_location or ball_location
 
         if start_location is None and end_location is not None and pass_distance_px is not None:
             start_location = self._relative_start_from_end(end_location, team_id, pass_distance_px)
         if end_location is None and start_location is not None and pass_distance_px is not None:
             end_location = self._relative_end_from_start(start_location, team_id, pass_distance_px)
 
-        return start_location or default_location, end_location, recipient_id
+        return start_location or default_location, end_location or default_location, recipient_id
 
     def _infer_carry_locations(
         self,
@@ -301,13 +303,17 @@ class StatsBombExporter:
         parsed = _CARRY_DETAILS_RE.search(details)
         carry_distance_px = float(parsed.group("distance")) if parsed else None
 
-        end_location = self._freeze_frame_player_location(freeze_frame, player_id) or default_location
+        # Do NOT fall back to default_location yet — that would make end ≈ start → xT delta ≈ 0.
+        end_location = self._freeze_frame_player_location(freeze_frame, player_id)
         start_location = self._last_player_locations.get(player_id)
 
         if start_location is None and end_location is not None and carry_distance_px is not None:
             start_location = self._relative_start_from_end(end_location, team_id, carry_distance_px)
+        # Estimate end from start + carry distance when freeze frame is absent
+        if end_location is None and start_location is not None and carry_distance_px is not None:
+            end_location = self._relative_end_from_start(start_location, team_id, carry_distance_px)
 
-        return start_location or default_location, end_location, None
+        return start_location or default_location, end_location or default_location, None
 
     def _relative_start_from_end(
         self,

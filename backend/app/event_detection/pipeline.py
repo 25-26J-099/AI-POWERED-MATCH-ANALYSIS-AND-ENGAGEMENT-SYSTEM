@@ -182,9 +182,13 @@ class MatchAnalysisPipeline:
             event_payload["team_name"] = team_name
         return event_payload
 
-    def _assign_teams_continuous(self, frame, tracks):
-        """Assign/reassign teams for ALL active players every frame."""
+    def _assign_teams_continuous(self, frame, tracks, frame_idx: int = 0):
+        """Assign/reassign teams every 5 frames (teams don't change frame-to-frame)."""
         if not self._team_fitted:
+            return
+        # Re-assigning every frame wastes ~80–120 ms/frame of CPU. Players don't switch
+        # teams between frames, so a 5-frame cadence is more than sufficient.
+        if frame_idx % 5 != 0:
             return
         fh, fw = frame.shape[:2]
         for tid, track in tracks.items():
@@ -266,8 +270,8 @@ class MatchAnalysisPipeline:
                 # Team fitting (first ~30 frames)
                 self._collect_and_fit_teams(frame, player_tracks)
 
-                # Continuous team assignment (EVERY frame, not cached)
-                self._assign_teams_continuous(frame, player_tracks)
+                # Continuous team assignment (every 5 frames — see method for rationale)
+                self._assign_teams_continuous(frame, player_tracks, frame_idx)
 
                 # Module 2.25: Jersey OCR on tracked player crops
                 self.jersey_ocr.process_tracks(frame, player_tracks, frame_idx)

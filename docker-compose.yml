@@ -55,6 +55,9 @@ services:
       SOX_BINARY: sox
       GCS_BUCKET: ${GCS_BUCKET:-}
       MLFLOW_TRACKING_URI: http://mlflow:5001
+      # Speed optimisation: reduce CPU-heavy ops frequency
+      REID_EMBEDDING_UPDATE_INTERVAL: "10"
+      OCR_UPDATE_INTERVAL: "20"
     volumes:
       - appdata:/data
     ports:

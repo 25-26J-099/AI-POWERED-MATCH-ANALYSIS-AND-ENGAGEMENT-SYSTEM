@@ -83,13 +83,12 @@ async def upload_video(
     finally:
         await video.close()
 
-    # Mirror to GCS asynchronously (no-op when GCS_BUCKET is not configured)
+    # Mirror to GCS asynchronously (no-op when GCS_BUCKET is not configured).
+    # asyncio.to_thread() returns a coroutine — required by create_task().
+    # run_in_executor() returns a Future (not a coroutine) and would raise
+    # TypeError: a coroutine was expected → HTTP 500 on every upload.
     gcs_key = f"uploads/{stored_name}"
-    asyncio.create_task(
-        asyncio.get_event_loop().run_in_executor(
-            None, upload_to_gcs, str(video_path), gcs_key
-        )
-    )
+    asyncio.create_task(asyncio.to_thread(upload_to_gcs, str(video_path), gcs_key))
 
     job_service = get_job_service()
     job = job_service.create_job()

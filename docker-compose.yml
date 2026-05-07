@@ -83,33 +83,28 @@ services:
       - backend
 
   # ── MLflow Tracking Server ──────────────────────────────────────────────────
+  # Uses SQLite so it starts with zero external dependencies.
+  # Previous approach (PostgreSQL backend) failed because Docker's initdb
+  # scripts only run on first boot of a fresh pgdata volume — the mlflow
+  # database was never created in the existing volume, causing MLflow to
+  # crash immediately on startup.  SQLite file lives in the mlflowdata volume
+  # and persists across container restarts.
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.14.3
     restart: unless-stopped
-    # Install psycopg2-binary before starting — the base MLflow image doesn't
-    # include a PostgreSQL driver.
     entrypoint: ["/bin/bash", "-c"]
     command:
       - >
-        pip install --quiet psycopg2-binary &&
         mlflow server
-          --backend-store-uri postgresql://appuser:${DB_PASSWORD:-devpassword}@db:5432/mlflow
-          --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-/mlflow-artifacts}
+          --backend-store-uri sqlite:////mlflow-artifacts/mlflow.db
+          --default-artifact-root /mlflow-artifacts/artifacts
           --host 0.0.0.0
           --port 5001
-    environment:
-      # When GCS_BUCKET is set, override artifact root to GCS
-      MLFLOW_ARTIFACT_ROOT: ${GCS_BUCKET:+gs://${GCS_BUCKET}/mlflow}
-      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-key.json
     volumes:
       - mlflowdata:/mlflow-artifacts
-      # Mount GCP service-account key if present (for GCS artifact uploads)
-      - ${GCP_KEY_PATH:-/dev/null}:/secrets/gcp-key.json:ro
     ports:
       - "5001:5001"
-    depends_on:
-      db:
-        condition: service_healthy
+    # No depends_on db — SQLite has no PostgreSQL dependency
 
   # ── Ollama (local LLM for commentary) ──────────────────────────────────────
   ollama:

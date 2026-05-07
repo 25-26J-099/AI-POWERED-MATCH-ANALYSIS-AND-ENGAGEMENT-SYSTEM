@@ -183,9 +183,9 @@ $GCLOUD compute instances create "${VM_NAME}" \
 # ── 8. Firewall rules ─────────────────────────────────────────────────────────
 echo ">>> Creating firewall rules..."
 $GCLOUD compute firewall-rules create allow-football-ai \
-  --allow=tcp:8000,tcp:5000 \
+  --allow=tcp:8000,tcp:5001 \
   --target-tags=http-server \
-  --description="Allow backend (8000) and MLflow (5000) traffic" \
+  --description="Allow backend (8000) and MLflow (5001) traffic" \
   2>/dev/null || echo "    (firewall rule already exists)"
 
 # ── 9. Cloud Build — grant SSH access to VM ───────────────────────────────────
@@ -213,7 +213,7 @@ echo ""
 echo "=== Setup complete! ====================================================="
 echo ""
 echo "  VM external IP:   ${VM_IP}"
-echo "  MLflow UI:        http://${VM_IP}:5000"
+echo "  MLflow UI:        http://${VM_IP}:5001"
 echo "  Backend API:      http://${VM_IP}:8000"
 echo "  Artifact Registry: ${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/"
 echo ""

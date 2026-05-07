@@ -6,6 +6,7 @@ from typing import List, Tuple
 import numpy as np
 import os
 from app.event_detection.event_detector import GameEvent, normalize_event_type
+from app.config.settings import settings
 
 class EventClassifier(nn.Module):
     """
@@ -58,7 +59,9 @@ class MLEventDetector:
     """ML-based event detection using trained neural network"""
     
     def __init__(self, model_path: str = None, config=None):
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        # Use CPU by default — lightweight LSTM classifier; GPU transfer overhead
+        # exceeds inference time for small feature windows. GPU reserved for YOLO.
+        self.device = getattr(settings, "ML_CLASSIFIER_DEVICE", "cpu")
         self.model = EventClassifier().to(self.device)
         self.window_size = 16  # frames
         self.feature_buffer = []

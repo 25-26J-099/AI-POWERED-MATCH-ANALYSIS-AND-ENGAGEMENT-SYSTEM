@@ -298,7 +298,7 @@ def integrate_ml_detector_into_pipeline(pipeline, weights_path):
         ml_detector = MLEventDetector(
             weights_path=weights_path,
             config=pipeline.config,
-            device='auto'
+            device='cpu'   # GPU reserved for YOLO; CNN event detector runs fine on CPU
         )
         
         # Create hybrid system

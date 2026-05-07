@@ -86,16 +86,16 @@ class Settings(BaseSettings):
         description="Fail startup when FastReID is required but unavailable",
     )
     FASTREID_DEVICE: str = Field(
-        default="auto",
-        description="Preferred FastReID device: auto, cpu, or cuda",
+        default="cpu",
+        description="Preferred FastReID device: auto, cpu, or cuda. CPU preferred — GPU overhead dominates for small Re-ID crops on a powerful CPU.",
     )
     TORCHREID_DEVICE: str = Field(
-        default="cuda",
-        description="Preferred torchreid device: auto, cpu, or cuda. Defaults to CUDA for GPU-first re-identification when supported.",
+        default="cpu",
+        description="Preferred torchreid device: auto, cpu, or cuda. CPU preferred — saves GPU for YOLO.",
     )
     TORCHREID_ALLOW_CPU: bool = Field(
-        default=False,
-        description="Allow torchreid to run on CPU. Disabled by default because it is too slow for live match processing compared with the handcrafted fallback.",
+        default=True,
+        description="Allow torchreid to run on CPU. Enabled — 32-vCPU host makes CPU Re-ID faster than GPU round-trip overhead.",
     )
     FASTREID_CONFIG_PATH: str = Field(
         default="./models/reid/fastreid/configs/football_vit.yml",
@@ -117,8 +117,12 @@ class Settings(BaseSettings):
         description="Enable jersey-number OCR during tracking.",
     )
     OCR_USE_GPU: bool = Field(
-        default=True,
-        description="Allow EasyOCR jersey-number recognition to use CUDA when available.",
+        default=False,
+        description="Allow EasyOCR jersey-number recognition to use CUDA. Disabled — CPU is faster for small jersey crops and frees GPU for YOLO.",
+    )
+    ML_CLASSIFIER_DEVICE: str = Field(
+        default="cpu",
+        description="Device for ML event classifier (EventClassifier CNN). CPU preferred — lightweight model, GPU transfer overhead not worth it.",
     )
     OCR_UPDATE_INTERVAL: int = Field(
         default=10,

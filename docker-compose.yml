@@ -58,6 +58,12 @@ services:
       # Speed optimisation: reduce CPU-heavy ops frequency
       REID_EMBEDDING_UPDATE_INTERVAL: "10"
       OCR_UPDATE_INTERVAL: "20"
+      # Route all non-YOLO tasks to CPU — GPU reserved for YOLO detection only
+      FASTREID_DEVICE: "cpu"
+      TORCHREID_DEVICE: "cpu"
+      TORCHREID_ALLOW_CPU: "true"
+      OCR_USE_GPU: "false"
+      ML_CLASSIFIER_DEVICE: "cpu"
     volumes:
       - appdata:/data
     ports:

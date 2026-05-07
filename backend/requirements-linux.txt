@@ -7,9 +7,9 @@
 
 # ── PyTorch (CUDA 12.4 Linux wheels) ─────────────────────────────────────────
 --extra-index-url https://download.pytorch.org/whl/cu124
-torch==2.7.1+cu124
-torchaudio==2.7.1+cu124
-torchvision==0.22.1+cu124
+torch==2.6.0+cu124
+torchaudio==2.6.0+cu124
+torchvision==0.21.0+cu124
 
 # ── PaddlePaddle (CPU wheel from PyPI — reliable in Cloud Build; GPU inference
 #    can be enabled on the VM by reinstalling paddlepaddle-gpu after deploy) ──

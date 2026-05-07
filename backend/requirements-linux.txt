@@ -113,7 +113,7 @@ pycparser>=2.21
 pycryptodome==3.23.0
 pydantic==2.13.3
 pydantic-settings==2.1.0
-pydantic_core==2.14.6
+# pydantic-core is a transitive dep of pydantic — version is managed by pydantic itself
 pyDeprecate==0.4.0
 pydub==0.25.1
 Pygments==2.19.2

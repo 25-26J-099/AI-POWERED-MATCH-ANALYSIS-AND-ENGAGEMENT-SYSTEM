@@ -37,7 +37,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    image: ${REGISTRY:-local}/football-ai-backend:${TAG:-latest}
+    image: ${REGISTRY:-local}/backend:${TAG:-latest}
     restart: unless-stopped
     runtime: nvidia
     env_file:
@@ -74,7 +74,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    image: ${REGISTRY:-local}/football-ai-frontend:${TAG:-latest}
+    image: ${REGISTRY:-local}/frontend:${TAG:-latest}
     restart: unless-stopped
     ports:
       - "80:80"

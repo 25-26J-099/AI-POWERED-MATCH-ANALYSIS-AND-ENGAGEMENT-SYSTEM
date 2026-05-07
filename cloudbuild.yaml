@@ -105,7 +105,7 @@ steps:
       - ${_GCE_VM}
       - --zone=${_GCE_ZONE}
       - --command
-      - "sudo mkdir -p /app && sudo cp /tmp/docker-compose.yml /app/docker-compose.yml && cd /app && sudo docker compose pull backend ollama mlflow && sudo docker compose up -d --remove-orphans backend ollama mlflow"
+      - "sudo mkdir -p /app && sudo cp /tmp/docker-compose.yml /app/docker-compose.yml && cd /app && sudo sh -c 'REGISTRY=us-central1-docker.pkg.dev/football-ai-495521/football-ai docker compose pull backend ollama mlflow && REGISTRY=us-central1-docker.pkg.dev/football-ai-495521/football-ai docker compose up -d --remove-orphans backend ollama mlflow'"
     waitFor: [scp-compose]
 
 images:

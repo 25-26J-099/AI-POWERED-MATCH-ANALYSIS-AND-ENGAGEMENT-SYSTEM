@@ -79,6 +79,7 @@ steps:
       - --port=8080
       - --memory=512Mi
       - --cpu=1
+      - --set-env-vars=BACKEND_URL=http://34.85.168.250:8000
     waitFor: [push-frontend]
 
   # ── 6a. Copy compose file + init SQL from Cloud Build workspace to VM ────────

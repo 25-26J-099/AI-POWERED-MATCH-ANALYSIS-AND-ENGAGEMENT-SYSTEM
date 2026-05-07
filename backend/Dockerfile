@@ -37,6 +37,11 @@ COPY requirements-linux.txt .
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir -r requirements-linux.txt
 
+# fastreid==1.4.0 metadata pins torch==1.13.1 (stale, never updated).
+# Installing with --no-deps bypasses that constraint; fastreid works fine
+# at runtime with torch 2.x — the pin is purely a metadata artifact.
+RUN pip install --no-cache-dir --no-deps fastreid==1.4.0
+
 # ── Application code ──────────────────────────────────────────────────────────
 COPY . .
 

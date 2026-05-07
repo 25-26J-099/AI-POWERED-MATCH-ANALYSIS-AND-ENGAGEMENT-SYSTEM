@@ -20,8 +20,9 @@ paddlepaddle==3.0.0
 #    on the VM if needed) ──────────────────────────────────────────────────────
 faiss-cpu>=1.7.3,<2.0.0
 
-# ── FastReID + dependencies (fully enabled on Linux + CUDA) ──────────────────
-fastreid==1.4.0
+# ── FastReID dependencies (fastreid itself is installed via --no-deps in the
+#    Dockerfile because its metadata pins torch==1.13.1, which conflicts with
+#    torch 2.x. At runtime it works fine with torch 2.x.) ────────────────────
 termcolor>=2.2.0,<3.0.0
 yacs>=0.1.8,<0.2.0
 

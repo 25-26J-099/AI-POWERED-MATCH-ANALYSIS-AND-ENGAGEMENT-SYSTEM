@@ -112,6 +112,8 @@ GCP_KEY_PATH=
 EOF
 
 # Write backend .env (mounted via env_file in docker-compose)
+# NOTE: docker-compose.yml environment: block overrides these for YOLO/backend settings,
+# but we set sensible defaults here so the app works even without docker-compose overrides.
 cat > "${APP_DIR}/backend/.env" <<EOF
 DATABASE_URL=${DATABASE_URL}
 OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -126,14 +128,21 @@ HF_STYLE_KMEANS_REPO=AI-POWERED-FOOTBALL-SYSTEM/football-ai-models
 HF_TOKEN=${HF_TOKEN}
 HF_CACHE_DIR=/data/model_cache
 GCS_BUCKET=${GCS_BUCKET}
-MLFLOW_TRACKING_URI=http://mlflow:5000
+MLFLOW_TRACKING_URI=http://mlflow:5001
 PREFECT_API_KEY=${PREFECT_API_KEY}
 PREFECT_API_URL=${PREFECT_API_URL}
 FORCE_CPU=false
-GNN_DEVICE=cuda
+# YOLO stays on GPU — all other tasks routed to CPU to avoid L4 contention
+GNN_DEVICE=cpu
+FASTREID_DEVICE=cpu
 FASTREID_ENABLED=true
-TORCHREID_DEVICE=cuda
-CORS_ORIGINS=["http://localhost","http://localhost:80","http://localhost:3000"]
+TORCHREID_DEVICE=cpu
+TORCHREID_ALLOW_CPU=true
+OCR_USE_GPU=false
+ML_CLASSIFIER_DEVICE=cpu
+REID_EMBEDDING_UPDATE_INTERVAL=10
+OCR_UPDATE_INTERVAL=20
+CORS_ORIGINS=["http://localhost","http://localhost:80","http://localhost:3000","https://football-ai-frontend-*.run.app"]
 EOF
 
 # ── 7. Pull and start docker-compose stack (only if docker-compose.yml exists) ──

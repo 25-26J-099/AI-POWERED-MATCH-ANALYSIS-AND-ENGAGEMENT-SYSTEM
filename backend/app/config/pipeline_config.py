@@ -46,7 +46,7 @@ class DetectionConfig:
     batch_size: int = 4
     person_class_id: int = 0
     ball_class_id: int = 32
-    device: str = "auto"
+    device: str = "cuda"  # Explicit GPU — _resolve_device() falls back to CPU if unavailable
 
 
 @dataclass

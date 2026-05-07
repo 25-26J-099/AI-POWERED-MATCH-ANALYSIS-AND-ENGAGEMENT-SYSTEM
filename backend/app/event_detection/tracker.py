@@ -148,35 +148,33 @@ class YOLODetector:
             preferred = "auto"
 
         if preferred == "cpu":
+            logger.info("[Device] Forced to CPU by config.")
             return "cpu"
 
         try:
             import torch
         except ImportError:
+            logger.warning("[Device] torch not importable. Using CPU.")
             return "cpu"
 
         if not torch.cuda.is_available():
+            logger.warning(
+                "[Device] CUDA not available inside this container. Using CPU. "
+                "Check that nvidia-container-toolkit is installed and 'runtime: nvidia' "
+                "is set in docker-compose.yml for the backend service."
+            )
             return "cpu"
 
+        # Trust torch.cuda.is_available() — skip the arch-list check.
+        # PyTorch 2.x includes sm_89 (NVIDIA L4 / RTX 40-series) in cu124 wheels.
+        # The old arch-list guard was overly conservative and silently caused YOLO
+        # to run on CPU on machines with sm_89 GPUs in some environment configurations.
+        gpu_name = torch.cuda.get_device_name(0)
         capability = torch.cuda.get_device_capability(0)
-        sm_tag = f"sm_{capability[0]}{capability[1]}"
-        arch_list = set(torch.cuda.get_arch_list())
-        cuda_supported = sm_tag in arch_list
-
-        if preferred == "cuda" and not cuda_supported:
-            logger.warning(
-                "CUDA was requested but the installed PyTorch build does not support GPU arch %s. Falling back to CPU.",
-                sm_tag,
-            )
-            return "cpu"
-
-        if preferred == "auto" and not cuda_supported:
-            logger.warning(
-                "CUDA is available but the installed PyTorch build does not support GPU arch %s. Falling back to CPU.",
-                sm_tag,
-            )
-            return "cpu"
-
+        logger.info(
+            "[Device] Using CUDA — GPU: %s (sm_%s%s)",
+            gpu_name, capability[0], capability[1],
+        )
         return "cuda"
 
     def _detect_ultralytics(self, frame: np.ndarray) -> List[Detection]:

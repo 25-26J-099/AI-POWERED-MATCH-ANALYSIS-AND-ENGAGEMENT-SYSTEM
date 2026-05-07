@@ -108,16 +108,7 @@ def get_event_type(event: dict) -> str:
     return event.get("type", {}).get("name", "Unknown")
 
 def get_player_name(event: dict) -> str:
-    player = event.get("player", {})
-    if isinstance(player, dict):
-        return str(player.get("name") or "Unknown Player")
-    return str(player or "Unknown Player")
-
-def get_pass_recipient_name(event: dict) -> str:
-    recipient = event.get("pass", {}).get("recipient", {})
-    if isinstance(recipient, dict):
-        return str(recipient.get("name") or "space")
-    return str(recipient or "space")
+    return event.get("player", {}).get("name", "Unknown Player")
 
 def get_last_name(full_name: str) -> str:
     parts = [p for p in str(full_name).strip().split() if p]
@@ -126,17 +117,15 @@ def get_last_name(full_name: str) -> str:
     return parts[-1]
 
 def get_player_last_name(event: dict) -> str:
-    """Return the exact StatsBomb player label used by the CV export."""
-    return get_player_name(event)
+    """Extract a short name for name-call style commentary."""
+    return get_last_name(get_player_name(event))
 
 def get_pass_recipient_last_name(event: dict) -> str:
-    return get_pass_recipient_name(event)
+    recipient = event.get("pass", {}).get("recipient", {}).get("name", "space")
+    return get_last_name(recipient)
 
 def get_team_name(event: dict) -> str:
-    team = event.get("team", {})
-    if isinstance(team, dict):
-        return str(team.get("name") or "Unknown Team")
-    return str(team or "Unknown Team")
+    return event.get("team", {}).get("name", "Unknown Team")
 
 def parse_timestamp(ts: str) -> float:
     try:
@@ -163,14 +152,6 @@ def is_free_kick_event(event: dict) -> bool:
         stype = event.get("shot", {}).get("type", {}).get("name", "")
         return "Free Kick" in stype
     return False
-
-def is_corner_event(event: dict) -> bool:
-    play_pattern = event.get("play_pattern", {}).get("name", "")
-    if "Corner" in str(play_pattern):
-        return True
-    ptype = event.get("pass", {}).get("type", {}).get("name", "")
-    stype = event.get("shot", {}).get("type", {}).get("name", "")
-    return "Corner" in str(ptype) or "Corner" in str(stype)
 
 def is_long_form_commentary_event(event: dict) -> bool:
     etype = get_event_type(event)
@@ -595,16 +576,16 @@ def generate_event_narrative(
         narrative += f" commits a foul in {zone}, resulting in {card}."
     
     elif etype == "Dribble":
-        narrative += f" dribbles through {zone}."
+        narrative += f" executes a Dribble in {zone}."
     
     elif etype == "Pressure":
-        narrative += f" applies pressure in {zone}."
+        narrative += f" executes a Pressure in {zone}."
     
     elif etype == "Goal Keeper":
-        narrative += f" handles the goalkeeper action in {zone}."
+        narrative += f" executes a Goal Keeper in {zone}."
     
     else:
-        narrative += f" is involved in a {etype} in {zone}."
+        narrative += f" executes a {etype} in {zone}."
     
     return narrative
 
@@ -954,17 +935,6 @@ def build_flattened_stream(
 def build_prompt(flattened_stream: str, intensity: str, anchor_event: dict) -> str:
     """Build the LLM prompt, keeping non-goal events concise."""
     parts = [f"Intensity: {intensity}"]
-    allowed_names = sorted(collect_allowed_names([anchor_event]))
-    if allowed_names:
-        parts.append(
-            "[NAME RULE: Use only names that appear in the event stream. "
-            f"Allowed exact names for this anchor: {', '.join(allowed_names)}. "
-            "Do not invent real player names. If the data says Player 17, say Player 17.]"
-        )
-    parts.append(
-        "[FACT RULE: Describe only the action and outcome present in the event stream. "
-        "Do not invent corners, crosses, goals, assists, empty nets, saves, or fouls unless they are explicitly shown.]"
-    )
     
     if is_goal_event(anchor_event):
         parts.append(
@@ -981,7 +951,9 @@ def build_prompt(flattened_stream: str, intensity: str, anchor_event: dict) -> s
         parts.append("")
     else:
         parts.append(
-            "[SYSTEM INSTRUCTION: Output an ultra-short call (max 6 words).]"
+            "[SYSTEM INSTRUCTION: Generate a short, punchy play-by-play call "
+            "that connects to the previous action. Keep it natural and do not "
+            "invent outcomes beyond the event stream.]"
         )
         parts.append("")
     
@@ -1097,176 +1069,6 @@ def generate_template_commentary(events: list[dict], anchor_idx: int, anchor_inf
 
     return f"{player} involved."
 
-_NAME_PHRASE_RE = re.compile(r"\b[A-Z][a-z]+(?:-[A-Z][a-z]+)?(?:\s+[A-Z][a-z]+(?:-[A-Z][a-z]+)?)+\b")
-_HYphenated_NAME_RE = re.compile(r"\b[A-Z][a-z]+-[A-Z][a-z]+\b")
-_SINGLE_NAME_AFTER_ACTION_RE = re.compile(
-    r"\b(?:by|from|to|for|finds|find|towards|toward)\s+([A-Z][a-z]+(?:-[A-Z][a-z]+)?)\b"
-)
-_PLAYER_NUMBER_ACTIONS = (
-    "advances",
-    "beats",
-    "brings",
-    "carries",
-    "claims",
-    "clears",
-    "closes",
-    "deals",
-    "draws",
-    "drives",
-    "finds",
-    "gathers",
-    "gets",
-    "glides",
-    "hooks",
-    "involved",
-    "keeps",
-    "late",
-    "lets",
-    "passes",
-    "plays",
-    "presses",
-    "puts",
-    "recycles",
-    "scores",
-    "takes",
-    "wins",
-)
-_COMMON_CAPITALIZED_PHRASES = {
-    "A fine",
-    "After",
-    "Almost",
-    "Ball Recovery",
-    "Clearance",
-    "Defense",
-    "Free Kick",
-    "Foul Committed",
-    "Foul Won",
-    "Goal Keeper",
-    "High",
-    "Intensity",
-    "Just",
-    "Player",
-    "Regular Play",
-    "Shot",
-    "The",
-    "Unknown Player",
-    "Unknown Team",
-}
-
-
-def collect_allowed_names(events: list[dict]) -> set[str]:
-    names: set[str] = set()
-    for event in events:
-        player_name = get_player_name(event)
-        if player_name and player_name != "Unknown Player":
-            names.add(player_name)
-        recipient_name = get_pass_recipient_name(event)
-        if recipient_name and recipient_name != "space":
-            names.add(recipient_name)
-        team_name = get_team_name(event)
-        if team_name and team_name != "Unknown Team":
-            names.add(team_name)
-    return names
-
-
-def commentary_uses_only_allowed_names(text: str, events: list[dict]) -> bool:
-    """Reject LLM output that invents human names absent from the StatsBomb events."""
-    if not text:
-        return True
-
-    allowed = collect_allowed_names(events)
-    allowed_parts = set()
-    for name in allowed:
-        allowed_parts.add(name)
-        allowed_parts.update(part for part in re.split(r"\s+", name) if part)
-
-    for match in _NAME_PHRASE_RE.finditer(text):
-        phrase = match.group(0).strip()
-        if phrase in allowed or phrase in _COMMON_CAPITALIZED_PHRASES:
-            continue
-        if phrase.startswith("Player "):
-            continue
-        return False
-
-    for match in _HYphenated_NAME_RE.finditer(text):
-        phrase = match.group(0).strip()
-        if phrase not in allowed and phrase not in allowed_parts:
-            return False
-
-    generic_player_names = {
-        name for name in allowed if re.fullmatch(r"Player\s+\d+", name)
-    }
-    if generic_player_names and len(generic_player_names) == len([name for name in allowed if name.startswith("Player ")]):
-        for match in _SINGLE_NAME_AFTER_ACTION_RE.finditer(text):
-            token = match.group(1).strip()
-            if token not in allowed_parts and token not in _COMMON_CAPITALIZED_PHRASES:
-                return False
-
-    return True
-
-
-def restore_generic_player_labels(text: str, events: list[dict]) -> str:
-    """Turn bare generated labels like '17 shoots' back into exact 'Player 17'."""
-    if not text:
-        return text
-    player_numbers = sorted(
-        {
-            re.fullmatch(r"Player\s+(\d+)", name).group(1)
-            for name in collect_allowed_names(events)
-            if re.fullmatch(r"Player\s+\d+", name)
-        },
-        key=len,
-        reverse=True,
-    )
-    for number in player_numbers:
-        text = re.sub(
-            rf"(?<!Player\s)\b{re.escape(number)}\b(?=\s+(?:{'|'.join(_PLAYER_NUMBER_ACTIONS)})\b)",
-            f"Player {number}",
-            text,
-            flags=re.IGNORECASE,
-        )
-        text = re.sub(
-            rf"\b(by|from|to|for)\s+{re.escape(number)}\b",
-            rf"\1 Player {number}",
-            text,
-            flags=re.IGNORECASE,
-        )
-    return text
-
-
-def commentary_respects_anchor_event(text: str, anchor_event: dict) -> bool:
-    """Reject obvious event/outcome hallucinations from the LLM."""
-    lowered = (text or "").lower()
-    etype = get_event_type(anchor_event)
-
-    if not is_goal_event(anchor_event) and re.search(r"\b(goal|scores|empty net|finds the net)\b", lowered):
-        return False
-    if "executes a" in lowered:
-        return False
-    if "corner" in lowered and not is_corner_event(anchor_event):
-        return False
-    if "free kick" in lowered and not is_free_kick_event(anchor_event):
-        return False
-    if "cross" in lowered and not bool(anchor_event.get("pass", {}).get("cross")):
-        return False
-    if etype != "Shot" and re.search(r"\bshot|effort|lets one fly\b", lowered):
-        return False
-    return True
-
-
-def ensure_allowed_commentary_names(
-    text: str,
-    events: list[dict],
-    anchor_idx: int,
-    anchor_info: dict,
-) -> str:
-    text = restore_generic_player_labels(text, events)
-    anchor_event = events[anchor_idx]
-    if commentary_uses_only_allowed_names(text, events) and commentary_respects_anchor_event(text, anchor_event):
-        return enforce_surname_only(text, events).strip()
-    return generate_template_commentary(events, anchor_idx, anchor_info).strip()
-
-
 def enforce_surname_only(text: str, events: list[dict]) -> str:
     if not text:
         return text
@@ -1274,11 +1076,11 @@ def enforce_surname_only(text: str, events: list[dict]) -> str:
     full_to_last: dict[str, str] = {}
     for event in events:
         player_name = event.get("player", {}).get("name")
-        if player_name and not re.fullmatch(r"Player\s+\d+", str(player_name)):
-            full_to_last[player_name] = str(player_name)
+        if player_name:
+            full_to_last[player_name] = get_last_name(player_name)
         recipient_name = event.get("pass", {}).get("recipient", {}).get("name")
-        if recipient_name and not re.fullmatch(r"Player\s+\d+", str(recipient_name)):
-            full_to_last[recipient_name] = str(recipient_name)
+        if recipient_name:
+            full_to_last[recipient_name] = get_last_name(recipient_name)
 
     for full_name in sorted(full_to_last.keys(), key=len, reverse=True):
         last_name = full_to_last[full_name]
@@ -1536,12 +1338,7 @@ def main():
         else:
             commentary = generate_template_commentary(events, anchor_idx, {"reason": reason})
 
-        commentary = ensure_allowed_commentary_names(
-            commentary,
-            events,
-            anchor_idx,
-            {"reason": reason},
-        )
+        commentary = enforce_surname_only(commentary, events).strip()
         if not commentary:
             silent_count += 1
             print("   🔇  (silent)")

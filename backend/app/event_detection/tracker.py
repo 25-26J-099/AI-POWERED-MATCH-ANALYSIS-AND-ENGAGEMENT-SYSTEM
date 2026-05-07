@@ -104,13 +104,17 @@ class YOLODetector:
         try:
             from ultralytics import YOLO
             device = self._resolve_device()
+            self._yolo_device = device  # store — must be passed at inference time too
 
             logger.info(f"Loading YOLO model: {self.cfg.model_name} on {device}")
             self.model = YOLO(self.cfg.model_name)
+            # NOTE: model.to(device) moves weights but ultralytics resolves the
+            # inference device from call kwargs — NOT from weight location.
+            # We must pass device= explicitly in every self.model() call.
             self.model.to(device)
             self._backend = "ultralytics"
             self._initialized = True
-            logger.info("[OK] Using Ultralytics YOLOv8 backend")
+            logger.info("[OK] Using Ultralytics YOLOv8 backend on device: %s", device)
             return
         except (ImportError, Exception) as e:
             logger.info(f"Ultralytics not available ({e}), trying fallbacks...")
@@ -187,11 +191,15 @@ class YOLODetector:
         # Use minimum threshold for YOLO (we'll filter by class later)
         min_conf = min(self.cfg.player_confidence, self.cfg.ball_confidence)
         
+        # device= MUST be passed here — ultralytics resolves inference device from
+        # call kwargs, not from where model weights are. Omitting it causes CPU
+        # inference even when the model is loaded on GPU.
         results = self.model(
             frame,
             conf=min_conf,  # Low threshold to catch all candidates
             iou=self.cfg.iou_threshold,
             imgsz=self.cfg.input_size,
+            device=getattr(self, '_yolo_device', 'cuda'),
             verbose=False,
         )[0]
 

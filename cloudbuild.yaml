@@ -81,9 +81,21 @@ steps:
       - --cpu=1
     waitFor: [push-frontend]
 
-  # ── 6. Rolling update on GCE VM — sync repo then pull new images ───────────
-  # The VM may not have docker-compose.yml yet (startup script skips compose
-  # if the file is absent). Clone the repo on first deploy; pull on subsequent.
+  # ── 6a. Copy docker-compose.yml from Cloud Build workspace to VM ────────────
+  # Repo is private so curl/git from the VM can't reach it. scp pushes the
+  # file directly from Cloud Build's /workspace (where the repo is checked out).
+  - id: scp-compose
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - compute
+      - scp
+      - /workspace/docker-compose.yml
+      - ${_GCE_VM}:/tmp/docker-compose.yml
+      - --zone=${_GCE_ZONE}
+    waitFor: [push-backend]
+
+  # ── 6b. Pull new images and restart containers ───────────────────────────────
   - id: deploy-backend
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud
@@ -93,8 +105,8 @@ steps:
       - ${_GCE_VM}
       - --zone=${_GCE_ZONE}
       - --command
-      - "sudo mkdir -p /app && sudo curl -fsSL https://raw.githubusercontent.com/25-26J-099/AI-POWERED-MATCH-ANALYSIS-AND-ENGAGEMENT-SYSTEM/main/docker-compose.yml -o /app/docker-compose.yml && cd /app && sudo docker compose pull backend ollama mlflow && sudo docker compose up -d --remove-orphans backend ollama mlflow"
-    waitFor: [push-backend]
+      - "sudo mkdir -p /app && sudo cp /tmp/docker-compose.yml /app/docker-compose.yml && cd /app && sudo docker compose pull backend ollama mlflow && sudo docker compose up -d --remove-orphans backend ollama mlflow"
+    waitFor: [scp-compose]
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend:$SHORT_SHA

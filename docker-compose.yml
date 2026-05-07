@@ -86,12 +86,17 @@ services:
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.14.3
     restart: unless-stopped
-    command: >
-      mlflow server
-        --backend-store-uri postgresql://appuser:${DB_PASSWORD:-devpassword}@db:5432/mlflow
-        --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-/mlflow-artifacts}
-        --host 0.0.0.0
-        --port 5000
+    # Install psycopg2-binary before starting — the base MLflow image doesn't
+    # include a PostgreSQL driver.
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >
+        pip install --quiet psycopg2-binary &&
+        mlflow server
+          --backend-store-uri postgresql://appuser:${DB_PASSWORD:-devpassword}@db:5432/mlflow
+          --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-/mlflow-artifacts}
+          --host 0.0.0.0
+          --port 5000
     environment:
       # When GCS_BUCKET is set, override artifact root to GCS
       MLFLOW_ARTIFACT_ROOT: ${GCS_BUCKET:+gs://${GCS_BUCKET}/mlflow}

@@ -54,7 +54,7 @@ services:
       FFMPEG_BINARY: ffmpeg
       SOX_BINARY: sox
       GCS_BUCKET: ${GCS_BUCKET:-}
-      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_TRACKING_URI: http://mlflow:5001
     volumes:
       - appdata:/data
     ports:
@@ -96,7 +96,7 @@ services:
           --backend-store-uri postgresql://appuser:${DB_PASSWORD:-devpassword}@db:5432/mlflow
           --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-/mlflow-artifacts}
           --host 0.0.0.0
-          --port 5000
+          --port 5001
     environment:
       # When GCS_BUCKET is set, override artifact root to GCS
       MLFLOW_ARTIFACT_ROOT: ${GCS_BUCKET:+gs://${GCS_BUCKET}/mlflow}
@@ -106,7 +106,7 @@ services:
       # Mount GCP service-account key if present (for GCS artifact uploads)
       - ${GCP_KEY_PATH:-/dev/null}:/secrets/gcp-key.json:ro
     ports:
-      - "5000:5000"
+      - "5001:5001"
     depends_on:
       db:
         condition: service_healthy

@@ -81,7 +81,9 @@ steps:
       - --cpu=1
     waitFor: [push-frontend]
 
-  # ── 6. Rolling update on GCE VM — pull new images and restart ──────────────
+  # ── 6. Rolling update on GCE VM — sync repo then pull new images ───────────
+  # The VM may not have docker-compose.yml yet (startup script skips compose
+  # if the file is absent). Clone the repo on first deploy; pull on subsequent.
   - id: deploy-backend
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud
@@ -91,10 +93,7 @@ steps:
       - ${_GCE_VM}
       - --zone=${_GCE_ZONE}
       - --command
-      - |
-        cd /app && \
-        docker compose pull backend ollama mlflow && \
-        docker compose up -d --remove-orphans backend ollama mlflow
+      - "sudo mkdir -p /app && (sudo git -C /app pull origin main 2>/dev/null || sudo git clone https://github.com/25-26J-099/AI-POWERED-MATCH-ANALYSIS-AND-ENGAGEMENT-SYSTEM.git /app) && cd /app && sudo docker compose pull backend ollama mlflow && sudo docker compose up -d --remove-orphans backend ollama mlflow"
     waitFor: [push-backend]
 
 images:

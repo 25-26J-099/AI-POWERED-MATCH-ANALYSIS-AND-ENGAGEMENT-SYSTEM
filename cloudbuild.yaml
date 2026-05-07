@@ -81,18 +81,15 @@ steps:
       - --cpu=1
     waitFor: [push-frontend]
 
-  # ── 6a. Copy docker-compose.yml from Cloud Build workspace to VM ────────────
-  # Repo is private so curl/git from the VM can't reach it. scp pushes the
-  # file directly from Cloud Build's /workspace (where the repo is checked out).
+  # ── 6a. Copy compose file + init SQL from Cloud Build workspace to VM ────────
   - id: scp-compose
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - compute
-      - scp
-      - /workspace/docker-compose.yml
-      - ${_GCE_VM}:/tmp/docker-compose.yml
-      - --zone=${_GCE_ZONE}
+      - -c
+      - |
+        gcloud compute scp /workspace/docker-compose.yml ${_GCE_VM}:/tmp/docker-compose.yml --zone=${_GCE_ZONE} &&
+        gcloud compute scp /workspace/scripts/init-db.sql ${_GCE_VM}:/tmp/init-db.sql --zone=${_GCE_ZONE}
     waitFor: [push-backend]
 
   # ── 6b. Pull new images and restart containers ───────────────────────────────
@@ -105,7 +102,7 @@ steps:
       - ${_GCE_VM}
       - --zone=${_GCE_ZONE}
       - --command
-      - "sudo mkdir -p /app && sudo cp /tmp/docker-compose.yml /app/docker-compose.yml && cd /app && sudo sh -c 'REGISTRY=us-central1-docker.pkg.dev/football-ai-495521/football-ai docker compose pull backend ollama mlflow && REGISTRY=us-central1-docker.pkg.dev/football-ai-495521/football-ai docker compose up -d --remove-orphans backend ollama mlflow'"
+      - "sudo mkdir -p /app/scripts && sudo cp /tmp/docker-compose.yml /app/docker-compose.yml && sudo cp /tmp/init-db.sql /app/scripts/init-db.sql && cd /app && sudo sh -c 'REGISTRY=us-central1-docker.pkg.dev/football-ai-495521/football-ai docker compose pull backend ollama mlflow && REGISTRY=us-central1-docker.pkg.dev/football-ai-495521/football-ai docker compose up -d --remove-orphans backend ollama mlflow'"
     waitFor: [scp-compose]
 
 images:

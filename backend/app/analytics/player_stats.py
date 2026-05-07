@@ -1,13 +1,12 @@
 """Player statistics aggregation from event data."""
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 from app.analytics.xt import compute_event_xt
 from app.analytics.xg import compute_xg
-from app.analytics.vaep import compute_vaep
+from app.analytics.vaep import compute_vaep, VAEP_ACTION_TYPES
 
 
 def _get_event_type(event: dict) -> str:
-    """Extract event type name from raw event."""
     t = event.get("type", "")
     if isinstance(t, dict):
         return t.get("name", "")
@@ -15,16 +14,15 @@ def _get_event_type(event: dict) -> str:
 
 
 def _is_successful_pass(event: dict) -> bool:
-    """Check if a pass was successful."""
     pass_data = event.get("pass", {})
     outcome = pass_data.get("outcome", {})
     if isinstance(outcome, dict):
         return outcome.get("name") not in ["Incomplete", "Out", "Unknown"]
-    return True  # No outcome means successful
+    return True  # No outcome key = successful in StatsBomb format
 
 
 def _is_progressive_pass(event: dict) -> bool:
-    """A pass is progressive if it moves the ball ≥10 yards (9.15m) toward goal."""
+    """A pass is progressive if it moves ≥9.15 m (10 yards) toward goal."""
     location = event.get("location", [])
     pass_data = event.get("pass", {})
     end_loc = pass_data.get("end_location", [])
@@ -39,7 +37,7 @@ def _is_progressive_pass(event: dict) -> bool:
 
 
 def _is_progressive_carry(event: dict) -> bool:
-    """A carry is progressive if it moves the ball ≥10 yards toward goal."""
+    """A carry is progressive if it moves ≥9.15 m toward goal."""
     location = event.get("location", [])
     carry_data = event.get("carry", {})
     end_loc = carry_data.get("end_location", [])
@@ -53,11 +51,18 @@ def _is_progressive_carry(event: dict) -> bool:
     return (start_dist - end_dist) >= 9.15
 
 
-def compute_player_stats(player_events: List[dict]) -> Dict:
+def compute_player_stats(
+    player_events: List[dict],
+    precomputed_vaep: Optional[Dict[str, float]] = None,
+) -> Dict:
     """Aggregate all statistics for a single player from their events.
 
     Args:
-        player_events: List of raw event dicts for one player.
+        player_events: Raw event dicts for one player (in match order).
+        precomputed_vaep: Optional mapping of event id → vaep_value produced by
+            compute_match_vaep_values(). When supplied, VAEP is looked up from
+            this dict (true sequential formula). When None, falls back to the
+            single-event approximation for valid action types.
 
     Returns:
         Dictionary of aggregated stats.
@@ -85,7 +90,7 @@ def compute_player_stats(player_events: List[dict]) -> Dict:
     for event in player_events:
         event_type = _get_event_type(event)
 
-        # Touch count (any event with a location = a touch)
+        # Touch count — any event with a location
         if event.get("location"):
             stats["touches"] += 1
 
@@ -126,11 +131,15 @@ def compute_player_stats(player_events: List[dict]) -> Dict:
             if isinstance(outcome, dict) and outcome.get("name") in ["Won", "Success"]:
                 stats["duels_won"] += 1
 
-        # VAEP for all action types
-        vaep_val = compute_vaep(event)
-        stats["vaep"] += vaep_val
+        # VAEP — only for the action types included in training
+        if event_type in VAEP_ACTION_TYPES:
+            event_id = str(event.get("id") or event.get("event_uuid") or "")
+            if precomputed_vaep is not None and event_id in precomputed_vaep:
+                stats["vaep"] += precomputed_vaep[event_id]
+            elif precomputed_vaep is None:
+                # Fallback: single-event approximation
+                stats["vaep"] += compute_vaep(event)
 
-    # Pass accuracy
     if stats["passes"] > 0:
         stats["pass_accuracy"] = round(stats["successful_passes"] / stats["passes"] * 100, 2)
 

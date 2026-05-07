@@ -1,6 +1,7 @@
 """Player style embeddings aligned with the training notebooks."""
 from __future__ import annotations
 
+import math
 from collections import Counter
 from typing import Dict, List, Optional
 
@@ -106,9 +107,23 @@ def _heuristic_style_cluster(player_payload: Dict) -> int:
 
 def _freeze_frame_players(event: dict) -> list[dict]:
     freeze_frame_raw = event.get("freeze_frame", [])
+    players: list[dict]
     if isinstance(freeze_frame_raw, dict):
-        return freeze_frame_raw.get("players", [])
-    return freeze_frame_raw if isinstance(freeze_frame_raw, list) else []
+        players = freeze_frame_raw.get("players", [])
+    elif isinstance(freeze_frame_raw, list):
+        players = freeze_frame_raw
+    else:
+        return []
+
+    # Reject pixel-space freeze frames — any coord outside StatsBomb pitch bounds
+    # (120×80) means the locations were not converted and cannot be used for
+    # distance-based features.  Fall back to no-360 defaults.
+    for p in players:
+        loc = p.get("location") if isinstance(p, dict) else None
+        if loc and len(loc) >= 2 and (loc[0] > 120.0 or loc[1] > 80.0):
+            return []
+
+    return players
 
 
 def _event_type_name(event: dict) -> str:
@@ -153,7 +168,7 @@ def _player_row(player_payload: Dict) -> dict:
                     defenders_ahead_count += 1
 
         if nearest_defender == 999.0:
-            nearest_defender = 0.0
+            nearest_defender = float("nan")  # no freeze frame — exclude from mean
         nearest_def.append(nearest_defender)
         teammates_ahead.append(teammates_ahead_count)
         defenders_ahead.append(defenders_ahead_count)
@@ -165,7 +180,7 @@ def _player_row(player_payload: Dict) -> dict:
         "xT": float(player_payload["xt"]),
         "x": float(np.mean(xs)) if xs else 0.0,
         "y": float(np.mean(ys)) if ys else 0.0,
-        "nearest_def": float(np.mean(nearest_def)) if nearest_def else 0.0,
+        "nearest_def": float(np.nanmean(nearest_def)) if nearest_def and not all(math.isnan(v) for v in nearest_def) else 0.0,
         "teammates_ahead": float(sum(teammates_ahead)) / max(len(valid_events), 1),
         "defenders_ahead": float(sum(defenders_ahead)) / max(len(valid_events), 1),
         "xG": float(player_payload["xg"]),

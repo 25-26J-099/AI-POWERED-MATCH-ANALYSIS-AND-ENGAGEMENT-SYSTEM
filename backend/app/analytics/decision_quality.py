@@ -5,8 +5,10 @@ Coordinate convention (matches the research notebooks):
     x_norm = x_pitch / 120,  y_norm = y_pitch / 80
 
   Event locations stored in raw_data are in StatsBomb pitch coords (0-120, 0-80).
-  Freeze-frame player locations are pixel coords from the video frame and are
-  converted:  x_norm = x_px / frame_w,  y_norm = y_px / frame_h
+  Freeze-frame player locations: after the statsbomb_export fix they are stored
+  in StatsBomb pitch units (0-120, 0-80).  Legacy records in the DB may still
+  contain pixel coords — detected by any coordinate exceeding the pitch bounds
+  and converted via x_norm = x_px / frame_w, y_norm = y_px / frame_h.
 """
 
 from __future__ import annotations
@@ -100,7 +102,13 @@ def _parse_freeze_players(freeze_frame, fw: float = FRAME_W, fh: float = FRAME_H
         loc = p.get("location", [])
         if not loc or len(loc) < 2:
             continue
-        xn, yn = _pixel_to_norm(float(loc[0]), float(loc[1]), fw, fh)
+        lx, ly = float(loc[0]), float(loc[1])
+        # Pitch-unit coords (after exporter fix): normalise by pitch dimensions.
+        # Legacy pixel-space coords (any value > pitch bounds): normalise by frame size.
+        if lx > 120.0 or ly > 80.0:
+            xn, yn = _pixel_to_norm(lx, ly, fw, fh)
+        else:
+            xn, yn = _pitch_to_norm(lx, ly)
         players.append({
             "x": xn,
             "y": yn,
@@ -248,7 +256,10 @@ _NAN_FILLS = {
     "cand_num_defenders_near": 0.0,
     "cand_num_defenders_in_lane": 0.0,
     "cand_defenders_ahead": 0.0,
-    "nearest_defender_dist": 0.0,
+    # 1.0 = no opponent visible, treat as far away (max normalised distance).
+    # Using 0.0 here would imply a defender is co-located with the ball, which
+    # would systematically depress success-probability predictions.
+    "nearest_defender_dist": 1.0,
     "defensive_compactness": 0.0,
     "nearest_teammate_dist": 0.0,
 }
@@ -302,11 +313,15 @@ def _match_chosen(ev: dict, candidates: list) -> Optional[int]:
         return best_i if best_d < 0.05 else None
 
     if etype in ("Carry", "Dribble"):
+        if ev["end_x"] is None:
+            return None
         best_i, best_d = None, float("inf")
         for i, c in enumerate(candidates):
             if c["type"] != "dribble":
                 continue
-            d = _dist(ev["x"], ev["y"], c["target_x"], c["target_y"])
+            # Match against where the player actually moved to (end location),
+            # not the start position — mirrors the Pass logic above.
+            d = _dist(ev["end_x"], ev["end_y"], c["target_x"], c["target_y"])
             if d < best_d:
                 best_d, best_i = d, i
         return best_i

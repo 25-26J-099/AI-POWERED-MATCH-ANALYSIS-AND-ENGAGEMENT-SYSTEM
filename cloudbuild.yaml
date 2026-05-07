@@ -76,7 +76,7 @@ steps:
       - --region=${_REGION}
       - --platform=managed
       - --allow-unauthenticated
-      - --port=80
+      - --port=8080
       - --memory=512Mi
       - --cpu=1
     waitFor: [push-frontend]

@@ -11,12 +11,14 @@ torch==2.7.1+cu124
 torchaudio==2.7.1+cu124
 torchvision==0.22.1+cu124
 
-# ── PaddlePaddle GPU (Linux CUDA 12.6 wheel — backward-compatible with 12.4) ─
---extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/
-paddlepaddle-gpu==3.0.0
+# ── PaddlePaddle (CPU wheel from PyPI — reliable in Cloud Build; GPU inference
+#    can be enabled on the VM by reinstalling paddlepaddle-gpu after deploy) ──
+paddlepaddle==3.0.0
 
-# ── FAISS GPU (replaces faiss-cpu; leverages A100 for Re-ID gallery search) ──
-faiss-gpu>=1.7.3,<2.0.0
+# ── FAISS CPU (faiss-gpu has no CUDA 12.x wheels on PyPI; use faiss-cpu which
+#    still runs on the host — GPU-accelerated FAISS can be installed separately
+#    on the VM if needed) ──────────────────────────────────────────────────────
+faiss-cpu>=1.7.3,<2.0.0
 
 # ── FastReID + dependencies (fully enabled on Linux + CUDA) ──────────────────
 fastreid==1.4.0

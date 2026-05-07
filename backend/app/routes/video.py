@@ -19,6 +19,7 @@ from app.models.schemas import (
 from app.services.analysis_service import AnalysisRequestOptions
 from app.services.artifact_service import ArtifactService
 from app.services.dependencies import get_artifact_service, get_job_service
+from app.services.football_video_validator import validate_football_video
 from app.services.job_service import JobService
 from app.services.merged_pipeline_service import monitor_tracking_job
 
@@ -149,6 +150,11 @@ async def analyze_video_upload(
     finally:
         await file.close()
 
+    validation = await asyncio.to_thread(validate_football_video, input_path)
+    if not validation.is_valid:
+        input_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=validation.message)
+
     record = job_service.create_job()
     try:
         job_service.start_job(
@@ -169,6 +175,7 @@ async def analyze_video_upload(
     match = Match(
         video_path=str(input_path),
         tracking_job_id=record.job_id,
+        tracking_artifacts={"football_video_validation": validation.to_dict()},
         status="tracking",
         status_detail="Tracking job started from the Component 1 API upload endpoint.",
     )

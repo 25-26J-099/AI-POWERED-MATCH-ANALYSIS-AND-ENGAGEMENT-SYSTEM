@@ -163,6 +163,26 @@ class Settings(BaseSettings):
         default=1,
         description="Maximum number of concurrent team-color preview jobs allowed across the backend.",
     )
+    ENABLE_FOOTBALL_VIDEO_VALIDATION: bool = Field(
+        default=True,
+        description="Validate uploaded videos for football-match visual content before creating processing jobs.",
+    )
+    FOOTBALL_VIDEO_VALIDATION_SAMPLE_FRAMES: int = Field(
+        default=12,
+        description="Number of frames sampled during lightweight football-video validation.",
+    )
+    FOOTBALL_VIDEO_VALIDATION_MIN_CONFIDENCE: float = Field(
+        default=0.55,
+        description="Minimum confidence required to accept an upload as a football match video.",
+    )
+    FOOTBALL_VIDEO_VALIDATION_UNCERTAIN_CONFIDENCE: float = Field(
+        default=0.40,
+        description="Confidence floor for treating a clip as uncertain rather than clearly invalid.",
+    )
+    FOOTBALL_VIDEO_VALIDATION_ALLOW_UNCERTAIN: bool = Field(
+        default=False,
+        description="Allow uncertain but plausible football clips through. Keep disabled for production upload validation.",
+    )
     SECURITY_ENABLE_HEADERS: bool = Field(
         default=True,
         description="Enable baseline enterprise security headers",

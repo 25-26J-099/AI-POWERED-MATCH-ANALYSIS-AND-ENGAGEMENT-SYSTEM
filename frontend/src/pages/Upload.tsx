@@ -57,7 +57,7 @@ export default function Upload() {
     return (
         <div className="page-container" style={{ maxWidth: '900px', margin: '0 auto', paddingTop: '48px' }}>
             <h1 className="page-title">Upload Match Video</h1>
-            <p className="page-subtitle">Upload once, then track the merged tracking and analytics pipeline in real time.</p>
+            <p className="page-subtitle">Upload once, validate match footage, then track the merged analytics pipeline in real time.</p>
 
             {error && (
                 <div
@@ -235,7 +235,7 @@ export default function Upload() {
                                 />
                             </div>
                             <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '8px' }}>
-                                Uploading... {progress}%
+                                {progress >= 100 ? 'Validating football match content...' : `Uploading... ${progress}%`}
                             </p>
                         </div>
                     )}
@@ -245,7 +245,7 @@ export default function Upload() {
                         disabled={uploading}
                         style={{ width: '100%', padding: '16px' }}
                     >
-                        {uploading ? 'Uploading...' : `Upload and Start Analysis (${commentaryLevel}) ->`}
+                        {uploading ? 'Uploading and validating...' : `Upload and Start Analysis (${commentaryLevel}) ->`}
                     </button>
                 </div>
             )}

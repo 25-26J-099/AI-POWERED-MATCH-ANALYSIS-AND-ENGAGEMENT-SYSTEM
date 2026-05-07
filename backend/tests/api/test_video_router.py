@@ -91,6 +91,10 @@ def test_analyze_path_returns_job_id(client, monkeypatch, tmp_path: Path):
 
 
 def test_upload_submission_and_result_flow(client, monkeypatch, tmp_path: Path):
+    from app.config.settings import settings
+
+    monkeypatch.setattr(settings, "ENABLE_FOOTBALL_VIDEO_VALIDATION", False)
+
     def fake_start_job(job_id, input_path, options, output_name=None):
         _mark_job_completed(job_id, tmp_path)
 

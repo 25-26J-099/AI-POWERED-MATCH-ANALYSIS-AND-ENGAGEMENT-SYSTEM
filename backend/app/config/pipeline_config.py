@@ -186,6 +186,7 @@ class EventRoutingConfig:
         # and understand temporal sequences
         "ml_only": [
             "pass",           # Temporal: ball transfer between players (+10-15% accuracy)
+            "goal",           # Semantic class from the temporal CNN; exported as Shot outcome=Goal
             "interception",   # Complex: intercept trajectory mid-flight (+15-20% accuracy)
             "dribble",        # Temporal: sustained movement with ball (+10% accuracy)
             "sprint",         # Temporal: sustained high velocity (+10% accuracy)
@@ -336,6 +337,7 @@ class EventDetectionConfig:
     event_cooldowns: Dict[str, int] = field(default_factory=lambda: {
         "out_of_bounds": 100,
         "shot": 60,
+        "goal": 60,
         "tackle": 50,
         "possession_change": 25,
         "pass": 25,

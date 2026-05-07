@@ -1,6 +1,4 @@
 """
-Simple Ball Tracking Module - Based on Previous Working Implementation
-
 This module replaces the complex Kalman-filter-based ball tracker with a simple,
 reliable approach that directly uses YOLO detections with a history buffer.
 
@@ -10,7 +8,6 @@ Philosophy:
 - Minimal processing overhead
 - Fewer failure modes = more reliability
 
-Based on the proven implementation from component1_tracking.py that worked well.
 """
 import numpy as np
 import logging

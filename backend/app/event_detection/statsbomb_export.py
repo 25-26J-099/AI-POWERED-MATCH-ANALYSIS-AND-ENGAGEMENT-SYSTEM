@@ -141,8 +141,8 @@ class StatsBombExporter:
                 end_location=end_location,
                 recipient_id=recipient_id,
             )
-        elif event_type == "shot":
-            sb_event["shot"] = self._create_shot_details()
+        elif event_type in {"shot", "goal"}:
+            sb_event["shot"] = self._create_shot_details(is_goal=event_type == "goal")
         elif event_type == "duel":
             sb_event["duel"] = self._create_duel_details()
         elif event_type == "carry":
@@ -194,6 +194,7 @@ class StatsBombExporter:
         type_mapping = {
             "pass": {"id": 30, "name": "Pass"},
             "shot": {"id": 16, "name": "Shot"},
+            "goal": {"id": 16, "name": "Shot"},
             "tackle": {"id": 4, "name": "Duel"},
             "possession_change": {"id": 2, "name": "Ball Recovery"},
             "out_of_bounds": {"id": 6, "name": "Ball Out"},
@@ -401,12 +402,13 @@ class StatsBombExporter:
             details["end_location"] = end_location
         return details
 
-    def _create_shot_details(self) -> Dict[str, Any]:
+    def _create_shot_details(self, is_goal: bool = False) -> Dict[str, Any]:
+        outcome = {"id": 97, "name": "Goal"} if is_goal else {"id": 96, "name": "Off T"}
         return {
             "type": {"id": 87, "name": "Open Play"},
             "body_part": {"id": 40, "name": "Right Foot"},
             "technique": {"id": 93, "name": "Normal"},
-            "outcome": {"id": 96, "name": "Off T"},
+            "outcome": outcome,
         }
 
     def _create_duel_details(self) -> Dict[str, Any]:

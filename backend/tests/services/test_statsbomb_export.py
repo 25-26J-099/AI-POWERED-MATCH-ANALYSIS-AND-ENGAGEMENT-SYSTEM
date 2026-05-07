@@ -4,6 +4,7 @@ import json
 
 from app.analytics.player_stats import compute_player_stats
 from app.event_detection.statsbomb_export import StatsBombExporter
+from app.models.ml_event_detector import MLEventDetector
 
 
 def test_statsbomb_export_backfills_pass_and_carry_locations_for_xt(tmp_path):
@@ -82,3 +83,33 @@ def test_statsbomb_export_backfills_pass_and_carry_locations_for_xt(tmp_path):
     stats = compute_player_stats([carry_event, pass_event])
     assert stats["xt"] > 0.0
 
+
+def test_goal_exports_as_statsbomb_shot_with_goal_outcome(tmp_path):
+    exporter = StatsBombExporter(frame_width=1280, frame_height=720)
+
+    output_path = tmp_path / "statsbomb_events.json"
+    exporter.export_to_file(
+        [
+            {
+                "type": "goal",
+                "frame": 375,
+                "timestamp": 15.0,
+                "position": [1268.0, 360.0],
+                "player_id": 9,
+                "team_id": 0,
+                "details": "ML classification: Goal",
+                "source": "ml",
+            }
+        ],
+        str(output_path),
+    )
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    event = payload["events"][0]
+
+    assert event["type"]["name"] == "Shot"
+    assert event["shot"]["outcome"]["name"] == "Goal"
+
+
+def test_ml_goal_class_is_not_collapsed_to_shot():
+    assert MLEventDetector._map_prediction_class("Goal", {"Goal": "shot"}) == "goal"

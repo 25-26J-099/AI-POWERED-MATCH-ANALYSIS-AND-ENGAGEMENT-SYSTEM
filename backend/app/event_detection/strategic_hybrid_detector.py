@@ -36,6 +36,7 @@ class EventType(Enum):
     POSSESSION_CHANGE = "possession_change"
     PASS_ATTEMPT = "pass"
     SHOT = "shot"
+    GOAL = "goal"
     TACKLE = "tackle"
     OUT_OF_BOUNDS = "out_of_bounds"
     SPRINT = "sprint"
@@ -213,6 +214,7 @@ class StrategicHybridEventDetector:
         self.event_cooldowns = getattr(config.event_detection, 'event_cooldowns', {
             "out_of_bounds": 100,
             "shot": 60,
+            "goal": 60,
             "tackle": 50,
             "possession_change": 25,
             "pass": 25,

@@ -15,6 +15,7 @@ from app.config.settings import settings
 from app.database.database import get_db
 from app.models.models import Match, Team
 from app.services.dependencies import get_job_service
+from app.services.football_video_validator import validate_football_video
 from app.services.merged_pipeline_service import process_match_video
 from app.services.team_color_service import detect_team_colors_preview
 
@@ -82,6 +83,11 @@ async def upload_video(
     finally:
         await video.close()
 
+    validation = await asyncio.to_thread(validate_football_video, video_path)
+    if not validation.is_valid:
+        video_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=validation.message)
+
     job_service = get_job_service()
     job = job_service.create_job()
 
@@ -118,6 +124,7 @@ async def upload_video(
             "football_knowledge": football_knowledge,
             "team_name_map": team_name_map,
             "original_filename": filename,
+            "football_video_validation": validation.to_dict(),
         },
         status="team_mapping_pending",
         status_detail="Video uploaded. Waiting for team color detection...",
@@ -137,7 +144,8 @@ async def upload_video(
         "football_knowledge": football_knowledge,
         "home_team_name": home_team.name if home_team else None,
         "away_team_name": away_team.name if away_team else None,
-        "message": "Video uploaded. Proceed to team color mapping.",
+        "football_video_validation": validation.to_dict(),
+        "message": validation.message if validation.status == "uncertain" else "Video uploaded. Proceed to team color mapping.",
     }
 
 
@@ -266,6 +274,16 @@ async def proceed_pipeline(match_id: int, db: AsyncSession = Depends(get_db)):
             status_code=409,
             detail=f"Pipeline already started or completed (status: {match.status})",
         )
+
+    artifacts = dict(match.tracking_artifacts or {})
+    validation = await asyncio.to_thread(validate_football_video, match.video_path)
+    artifacts["football_video_validation"] = validation.to_dict()
+    match.tracking_artifacts = artifacts
+    if not validation.is_valid:
+        match.status = "failed"
+        match.status_detail = validation.message
+        await db.commit()
+        raise HTTPException(status_code=422, detail=validation.message)
 
     match.status = "uploading"
     match.status_detail = "Lineup submitted. Starting tracking pipeline..."

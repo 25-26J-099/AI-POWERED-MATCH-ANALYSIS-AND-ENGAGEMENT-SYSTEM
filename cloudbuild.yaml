@@ -93,7 +93,7 @@ steps:
       - ${_GCE_VM}
       - --zone=${_GCE_ZONE}
       - --command
-      - "sudo mkdir -p /app && (sudo git -C /app pull origin main 2>/dev/null || sudo git clone https://github.com/25-26J-099/AI-POWERED-MATCH-ANALYSIS-AND-ENGAGEMENT-SYSTEM.git /app) && cd /app && sudo docker compose pull backend ollama mlflow && sudo docker compose up -d --remove-orphans backend ollama mlflow"
+      - "sudo mkdir -p /app && sudo curl -fsSL https://raw.githubusercontent.com/25-26J-099/AI-POWERED-MATCH-ANALYSIS-AND-ENGAGEMENT-SYSTEM/main/docker-compose.yml -o /app/docker-compose.yml && cd /app && sudo docker compose pull backend ollama mlflow && sudo docker compose up -d --remove-orphans backend ollama mlflow"
     waitFor: [push-backend]
 
 images:

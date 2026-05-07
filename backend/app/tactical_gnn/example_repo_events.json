@@ -1,0 +1,64 @@
+{
+  "events": [
+    {
+      "event_uuid": "repo-evt-1",
+      "type": "Pass",
+      "team_id": 1,
+      "player_id": 10,
+      "position": [52.0, 40.0],
+      "labels": {
+        "formation": "4-3-3",
+        "team_shape": "Wide Shape",
+        "attacking_structure": "Wide Structure",
+        "defensive_block": "Mid Block",
+        "defensive_shape": "Compact Balanced"
+      },
+      "freeze_frame": {
+        "players": [
+          {"player_id": 10, "team_id": 1, "location": [12.0, 10.0], "teammate": true, "actor": true, "keeper": true},
+          {"player_id": 11, "team_id": 1, "location": [20.0, 20.0], "teammate": true},
+          {"player_id": 12, "team_id": 1, "location": [28.0, 30.0], "teammate": true},
+          {"player_id": 13, "team_id": 1, "location": [36.0, 40.0], "teammate": true},
+          {"player_id": 14, "team_id": 1, "location": [44.0, 50.0], "teammate": true},
+          {"player_id": 15, "team_id": 1, "location": [52.0, 60.0], "teammate": true},
+          {"player_id": 1, "team_id": 2, "location": [72.0, 18.0], "teammate": false},
+          {"player_id": 2, "team_id": 2, "location": [80.0, 28.0], "teammate": false},
+          {"player_id": 3, "team_id": 2, "location": [88.0, 38.0], "teammate": false},
+          {"player_id": 4, "team_id": 2, "location": [96.0, 48.0], "teammate": false},
+          {"player_id": 5, "team_id": 2, "location": [102.0, 58.0], "teammate": false},
+          {"player_id": 6, "team_id": 2, "location": [108.0, 40.0], "teammate": false, "keeper": true}
+        ]
+      }
+    },
+    {
+      "event_uuid": "repo-evt-2",
+      "type": "Carry",
+      "team_id": 2,
+      "player_id": 20,
+      "position": [42.0, 34.0],
+      "labels": {
+        "formation": "4-4-2",
+        "team_shape": "Compact Shape",
+        "attacking_structure": "Central Overload",
+        "defensive_block": "Low Block",
+        "defensive_shape": "Compact Narrow"
+      },
+      "freeze_frame": {
+        "players": [
+          {"player_id": 20, "team_id": 2, "location": [12.0, 12.0], "teammate": true, "actor": true, "keeper": true},
+          {"player_id": 21, "team_id": 2, "location": [20.0, 22.0], "teammate": true},
+          {"player_id": 22, "team_id": 2, "location": [26.0, 32.0], "teammate": true},
+          {"player_id": 23, "team_id": 2, "location": [32.0, 42.0], "teammate": true},
+          {"player_id": 24, "team_id": 2, "location": [38.0, 52.0], "teammate": true},
+          {"player_id": 25, "team_id": 2, "location": [44.0, 62.0], "teammate": true},
+          {"player_id": 7, "team_id": 1, "location": [74.0, 18.0], "teammate": false},
+          {"player_id": 8, "team_id": 1, "location": [80.0, 28.0], "teammate": false},
+          {"player_id": 9, "team_id": 1, "location": [86.0, 38.0], "teammate": false},
+          {"player_id": 16, "team_id": 1, "location": [92.0, 48.0], "teammate": false},
+          {"player_id": 17, "team_id": 1, "location": [98.0, 58.0], "teammate": false},
+          {"player_id": 18, "team_id": 1, "location": [104.0, 40.0], "teammate": false, "keeper": true}
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "checks": {
+    "distinct_texts": true,
+    "expert_not_longer_than_beginner": true,
+    "beginner_has_more_explanations": true,
+    "expert_has_at_least_as_much_jargon": true,
+    "intermediate_between_levels": true
+  },
+  "all_passed": true
+}

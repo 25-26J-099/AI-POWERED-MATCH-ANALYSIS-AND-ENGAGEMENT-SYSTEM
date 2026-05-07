@@ -1,0 +1,153 @@
+{
+  "dataset_report": {
+    "input_path": "app\\tactical_gnn\\example_repo_events.json",
+    "source_files": [
+      "app\\tactical_gnn\\example_repo_events.json"
+    ],
+    "detected_formats": [
+      "events"
+    ],
+    "total_records": 2,
+    "usable_samples": 2,
+    "dropped_samples": 0,
+    "dropped_reasons": {},
+    "label_counts": {
+      "formation": {
+        "4-3-3": 1,
+        "4-4-2": 1
+      },
+      "team_shape": {
+        "Wide Shape": 1,
+        "Compact Shape": 1
+      },
+      "attacking_structure": {
+        "Wide Structure": 1,
+        "Central Overload": 1
+      },
+      "defensive_block": {
+        "Mid Block": 1,
+        "Low Block": 1
+      },
+      "defensive_shape": {
+        "Compact Balanced": 1,
+        "Compact Narrow": 1
+      }
+    },
+    "label_source_counts": {
+      "formation": {
+        "ground_truth": 2
+      },
+      "team_shape": {
+        "ground_truth": 2
+      },
+      "attacking_structure": {
+        "ground_truth": 2
+      },
+      "defensive_block": {
+        "ground_truth": 2
+      },
+      "defensive_shape": {
+        "ground_truth": 2
+      }
+    },
+    "active_heads": [
+      "formation",
+      "team_shape",
+      "attacking_structure",
+      "defensive_block",
+      "defensive_shape"
+    ],
+    "schema_notes": [
+      "example_repo_events.json: detected repo events export with embedded freeze_frame."
+    ]
+  },
+  "checkpoint_path": "checkpoints/tactical_gnn_smoke/model.pt",
+  "device": "cpu",
+  "heads": {
+    "formation": {
+      "support": 2,
+      "accuracy": 0.0,
+      "macro_f1": 0.0,
+      "micro_f1": 0.0,
+      "label_support": {
+        "4-3-3": 1,
+        "4-4-2": 1
+      },
+      "prediction_distribution": {
+        "Unclear": 2
+      },
+      "label_source_support": {
+        "ground_truth": 2
+      },
+      "mean_confidence": 0.17739089578390121
+    },
+    "team_shape": {
+      "support": 2,
+      "accuracy": 0.0,
+      "macro_f1": 0.0,
+      "micro_f1": 0.0,
+      "label_support": {
+        "Wide Shape": 1,
+        "Compact Shape": 1
+      },
+      "prediction_distribution": {
+        "Balanced Shape": 2
+      },
+      "label_source_support": {
+        "ground_truth": 2
+      },
+      "mean_confidence": 0.2325553148984909
+    },
+    "attacking_structure": {
+      "support": 2,
+      "accuracy": 0.0,
+      "macro_f1": 0.0,
+      "micro_f1": 0.0,
+      "label_support": {
+        "Wide Structure": 1,
+        "Central Overload": 1
+      },
+      "prediction_distribution": {
+        "Balanced Structure": 2
+      },
+      "label_source_support": {
+        "ground_truth": 2
+      },
+      "mean_confidence": 0.23179671168327332
+    },
+    "defensive_block": {
+      "support": 2,
+      "accuracy": 0.5,
+      "macro_f1": 0.3333333333333333,
+      "micro_f1": 0.5,
+      "label_support": {
+        "Mid Block": 1,
+        "Low Block": 1
+      },
+      "prediction_distribution": {
+        "Low Block": 2
+      },
+      "label_source_support": {
+        "ground_truth": 2
+      },
+      "mean_confidence": 0.3697679191827774
+    },
+    "defensive_shape": {
+      "support": 2,
+      "accuracy": 0.0,
+      "macro_f1": 0.0,
+      "micro_f1": 0.0,
+      "label_support": {
+        "Compact Balanced": 1,
+        "Compact Narrow": 1
+      },
+      "prediction_distribution": {
+        "Spread Narrow": 2
+      },
+      "label_source_support": {
+        "ground_truth": 2
+      },
+      "mean_confidence": 0.21608461439609528
+    }
+  }
+}

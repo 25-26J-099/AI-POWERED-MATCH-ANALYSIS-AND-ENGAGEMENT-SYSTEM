@@ -1,0 +1,92 @@
+diff --git a/backend/pipeline.py b/backend/app/event_detection/pipeline.py
+index a7e8618..55ca7c6 100644
+--- a/backend/pipeline.py
++++ b/backend/app/event_detection/pipeline.py
+@@ -14,28 +14,24 @@ import time
+ import os
+ from typing import Optional, Dict
+ 
+-from config import PipelineConfig
+-from modules.video_preprocessor import VideoPreprocessor
+-from modules.tracker import PlayerBallTracker
+-from modules.team_assigner import TeamAssigner
+-from modules.player_reid import PlayerReIDModule
+-from strategic_hybrid_detector import StrategicHybridEventDetector
+-from statsbomb_export import StatsBombExporter
+-from utils.video_utils import VideoReader, VideoWriter
+-from utils.drawing_utils import Annotator
+-from utils.data_export import MatchDataExporter
+-
+-# Import robust Re-ID system for stable IDs
+-try:
+-    from robust_reid import RobustReIDSystem
+-except ImportError:
+-    import sys
+-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+-    from robust_reid import RobustReIDSystem
++from app.config.pipeline_config import PipelineConfig
++from app.config.settings import settings
++from app.event_detection.video_preprocessor import VideoPreprocessor
++from app.event_detection.tracker import PlayerBallTracker
++from app.event_detection.team_assigner import TeamAssigner
++from app.event_detection.player_reid import PlayerReIDModule
++from app.event_detection.strategic_hybrid_detector import StrategicHybridEventDetector
++from app.event_detection.statsbomb_export import StatsBombExporter
++from app.services.model_loader import download_hf_asset
++from app.utils.video_utils import VideoReader, VideoWriter
++from app.utils.drawing_utils import Annotator
++from app.utils.data_export import MatchDataExporter
++
++from app.event_detection.robust_reid import RobustReIDSystem
+ 
+ # v4: Import ML event detector
+ try:
+-    from integration.ml_event_detector import MLEventDetector, integrate_ml_detector_into_pipeline
++    from app.models.ml_event_detector import MLEventDetector, integrate_ml_detector_into_pipeline
+     ML_AVAILABLE = True
+ except ImportError:
+     MLEventDetector = None
+@@ -80,7 +76,7 @@ class MatchAnalysisPipeline:
+         self._ml_enabled = False
+         
+         # Initialize ML detector if configured
+-        if ML_AVAILABLE and config.ml_model.enable_ml_detector and config.ml_model.weights_path:
++        if ML_AVAILABLE and config.ml_model.enable_ml_detector:
+             self._initialize_ml_detector()
+ 
+     def _initialize_ml_detector(self):
+@@ -92,8 +88,17 @@ class MatchAnalysisPipeline:
+         try:
+             weights_path = self.config.ml_model.weights_path
+             if not os.path.exists(weights_path):
+-                logger.warning(f"ML model weights not found: {weights_path}")
+-                return
++                requested_filename = os.path.basename(weights_path) if weights_path else settings.HF_EVENT_DETECTOR_WEIGHTS_FILE
++                downloaded_path = download_hf_asset(
++                    settings.HF_FOOTBALL_MODELS_REPO,
++                    requested_filename or settings.HF_EVENT_DETECTOR_WEIGHTS_FILE,
++                )
++                if downloaded_path:
++                    weights_path = downloaded_path
++                    logger.info("[Pipeline] ML model weights downloaded from HuggingFace: %s", weights_path)
++                else:
++                    logger.warning(f"ML model weights not found locally or on HuggingFace: {weights_path}")
++                    return
+             
+             # Integrate ML detector
+             success = integrate_ml_detector_into_pipeline(self, weights_path)
+@@ -234,12 +239,12 @@ class MatchAnalysisPipeline:
+                     if self.hybrid_event_system:
+                         ball_pos = ball_track.center if ball_track and ball_track.frames_lost < 5 else None
+                         ml_events = self.hybrid_event_system.detect_events(
+-                            processed, ball_pos, player_tracks, frame_idx, self.fps
++                            frame, ball_pos, player_tracks, frame_idx, self.fps
+                         )
+                         # ML events are added to event detector's event list
+                         for ml_event in ml_events:
+                             # Convert to GameEvent format
+-                            from modules.event_detector import GameEvent
++                            from app.event_detection.event_detector import GameEvent
+                             event = GameEvent(
+                                 event_type=ml_event['type'],
+                                 frame_idx=ml_event['frame'],

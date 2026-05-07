@@ -1,0 +1,44 @@
+# Prefect project manifest
+# Deploy flows with: prefect deploy --all
+# Or a specific flow: prefect deploy -n match-analysis-pipeline
+
+name: football-ai-495521
+prefect-version: "3.*"
+
+# ── Pull step — how Prefect workers fetch your code ───────────────────────────
+pull:
+  - prefect.deployments.steps.git_clone:
+      repository: "{{ prefect.variables.repo_url }}"
+      branch: main
+      access_token: "{{ prefect.blocks.secret.github-token }}"
+
+# ── Deployments ───────────────────────────────────────────────────────────────
+deployments:
+
+  # Match analysis pipeline — triggered per video upload
+  - name: match-analysis-pipeline
+    entrypoint: backend/flows/match_pipeline.py:analyse_match
+    description: "Full match analysis: tracking → parallel analytics/PbP → tactical commentary → TTS"
+    work_pool:
+      name: football-ai-pool          # created via: prefect work-pool create football-ai-pool
+      work_queue_name: default
+    parameters: {}
+    # No schedule — triggered on demand after each video upload
+    tags:
+      - analysis
+      - production
+
+  # Weekly model retraining — runs every Sunday 02:00 UTC
+  - name: weekly-model-retrain
+    entrypoint: backend/flows/model_retrain.py:retrain_all_models
+    description: "Retrain xG, VAEP, DQ, style models; push via DVC to GCS; log to MLflow"
+    work_pool:
+      name: football-ai-pool
+      work_queue_name: default
+    schedules:
+      - cron: "0 2 * * 0"   # Every Sunday at 02:00 UTC
+        timezone: "UTC"
+        active: true
+    tags:
+      - retraining
+      - scheduled

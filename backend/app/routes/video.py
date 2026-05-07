@@ -1,0 +1,283 @@
+"""Video analysis API endpoints."""
+from __future__ import annotations
+
+import asyncio
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi.responses import FileResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config.settings import settings
+from app.database.database import get_db
+from app.models.models import Match
+from app.models.schemas import (
+    AnalyzePathRequest, AnalysisResultResponse, AnalyzeUploadRequest, EventListResponse, JobCreatedResponse,
+    JobStatusResponse,
+)
+from app.services.analysis_service import AnalysisRequestOptions
+from app.services.artifact_service import ArtifactService
+from app.services.dependencies import get_artifact_service, get_job_service
+from app.services.job_service import JobService
+from app.services.merged_pipeline_service import monitor_tracking_job
+
+router = APIRouter()
+
+
+def _to_options(payload: AnalyzePathRequest) -> AnalysisRequestOptions:
+    return AnalysisRequestOptions(
+        model=payload.model,
+        confidence=payload.confidence,
+        device=payload.device,
+        frame_skip=payload.frame_skip,
+        max_width=payload.max_width,
+        max_height=payload.max_height,
+        enable_stabilization=payload.enable_stabilization,
+        enable_reid=payload.enable_reid,
+        enable_events=payload.enable_events,
+        enable_minimap=payload.enable_minimap,
+        enable_freeze_frames=payload.enable_freeze_frames,
+        quiet=payload.quiet,
+        enable_ml_detector=payload.enable_ml_detector,
+        ml_model_path=payload.ml_model_path,
+        ml_confidence=payload.ml_confidence,
+        ml_device=payload.ml_device,
+        team_names=payload.team_names,
+    )
+
+
+def _to_job_created_response(
+    request: Request,
+    job_id: str,
+    submitted_at: str,
+    match_id: int | None = None,
+) -> JobCreatedResponse:
+    return JobCreatedResponse(
+        job_id=job_id,
+        match_id=match_id,
+        status="queued",
+        submitted_at=submitted_at,
+        status_url=str(request.url_for("get_job_status", job_id=job_id)),
+        result_url=str(request.url_for("get_job_result", job_id=job_id)),
+    )
+
+
+@router.post(
+    "/analyze/path",
+    response_model=JobCreatedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def analyze_video_by_path(
+    payload: AnalyzePathRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    job_service: JobService = Depends(get_job_service),
+) -> JobCreatedResponse:
+    options = _to_options(payload)
+    record = job_service.create_job()
+    try:
+        job_service.start_job(
+            job_id=record.job_id,
+            input_path=payload.input_path,
+            options=options,
+            output_name=payload.output_name,
+        )
+    except FileNotFoundError as exc:
+        job_service.delete_job(record.job_id)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        job_service.delete_job(record.job_id)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    match = Match(
+        video_path=payload.input_path,
+        tracking_job_id=record.job_id,
+        status="tracking",
+        status_detail="Tracking job started from the Component 1 API.",
+    )
+    db.add(match)
+    await db.commit()
+    await db.refresh(match)
+
+    asyncio.create_task(monitor_tracking_job(match.id, record.job_id))
+
+    return _to_job_created_response(request, record.job_id, record.submitted_at, match.id)
+
+
+@router.post(
+    "/analyze/upload",
+    response_model=JobCreatedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def analyze_video_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    job_service: JobService = Depends(get_job_service),
+) -> JobCreatedResponse:
+    payload = AnalyzeUploadRequest()
+    options = AnalysisRequestOptions(
+        model=payload.model,
+        confidence=payload.confidence,
+        device=payload.device,
+        frame_skip=payload.frame_skip,
+        max_width=payload.max_width,
+        max_height=payload.max_height,
+        enable_stabilization=payload.enable_stabilization,
+        enable_reid=payload.enable_reid,
+        enable_events=payload.enable_events,
+        enable_minimap=payload.enable_minimap,
+        enable_freeze_frames=payload.enable_freeze_frames,
+        quiet=payload.quiet,
+        enable_ml_detector=payload.enable_ml_detector,
+        ml_model_path=payload.ml_model_path,
+        ml_confidence=payload.ml_confidence,
+        ml_device=payload.ml_device,
+        team_names=payload.team_names,
+    )
+
+    upload_dir = Path(settings.UPLOAD_DIR) / "api_uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename or "upload.mp4").suffix or ".mp4"
+    input_path = upload_dir / f"{uuid.uuid4().hex}{suffix}"
+
+    try:
+        with input_path.open("wb") as output_file:
+            while chunk := await file.read(1024 * 1024):
+                output_file.write(chunk)
+    finally:
+        await file.close()
+
+    record = job_service.create_job()
+    try:
+        job_service.start_job(
+            job_id=record.job_id,
+            input_path=str(input_path),
+            options=options,
+            output_name=payload.output_name,
+        )
+    except FileNotFoundError as exc:
+        job_service.delete_job(record.job_id)
+        input_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        job_service.delete_job(record.job_id)
+        input_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    match = Match(
+        video_path=str(input_path),
+        tracking_job_id=record.job_id,
+        status="tracking",
+        status_detail="Tracking job started from the Component 1 API upload endpoint.",
+    )
+    db.add(match)
+    await db.commit()
+    await db.refresh(match)
+
+    asyncio.create_task(monitor_tracking_job(match.id, record.job_id))
+
+    return _to_job_created_response(request, record.job_id, record.submitted_at, match.id)
+
+
+@router.get("/jobs/{job_id}", response_model=JobStatusResponse, name="get_job_status")
+def get_job_status(
+    job_id: str,
+    job_service: JobService = Depends(get_job_service),
+) -> JobStatusResponse:
+    try:
+        record = job_service.get_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return JobStatusResponse(
+        job_id=record.job_id,
+        status=record.status,
+        submitted_at=record.submitted_at,
+        started_at=record.started_at,
+        completed_at=record.completed_at,
+        error=record.error,
+    )
+
+
+@router.get("/jobs/{job_id}/result", response_model=AnalysisResultResponse, name="get_job_result")
+def get_job_result(
+    job_id: str,
+    job_service: JobService = Depends(get_job_service),
+    artifact_service: ArtifactService = Depends(get_artifact_service),
+) -> AnalysisResultResponse:
+    try:
+        record = job_service.get_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    if record.status == "failed":
+        raise HTTPException(status_code=409, detail=record.error or "Job failed")
+    if record.status != "completed":
+        raise HTTPException(status_code=409, detail=f"Job is {record.status}")
+
+    result = record.result
+    artifact_urls = artifact_service.build_artifact_urls(job_id)
+    return AnalysisResultResponse(
+        job_id=record.job_id,
+        status=record.status,
+        output_video=str(result["output_video"]),
+        json_report=str(result["json_report"]),
+        frames_processed=int(result["frames_processed"]),
+        processing_time=float(result["processing_time"]),
+        avg_fps=float(result["avg_fps"]),
+        events_detected=int(result["events_detected"]),
+        event_summary={k: int(v) for k, v in result.get("event_summary", {}).items()},
+        possession=[float(v) for v in result.get("possession", [50.0, 50.0])],
+        ml_detector_used=bool(result.get("ml_detector_used", False)),
+        team_colors=list(result.get("team_colors", [])),
+        artifacts=artifact_urls,
+    )
+
+
+@router.get("/jobs/{job_id}/events", response_model=EventListResponse)
+def get_job_events(
+    job_id: str,
+    job_service: JobService = Depends(get_job_service),
+    artifact_service: ArtifactService = Depends(get_artifact_service),
+) -> EventListResponse:
+    try:
+        record = job_service.require_completed_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    try:
+        report_path = artifact_service.get_artifact_path(record, "json")
+        events, summary = artifact_service.load_events(report_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return EventListResponse(job_id=job_id, event_summary=summary, events=events)
+
+
+@router.get("/jobs/{job_id}/artifacts/{artifact_name}")
+def download_artifact(
+    job_id: str,
+    artifact_name: str,
+    job_service: JobService = Depends(get_job_service),
+    artifact_service: ArtifactService = Depends(get_artifact_service),
+) -> FileResponse:
+    try:
+        record = job_service.require_completed_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    try:
+        artifact_path = artifact_service.get_artifact_path(record, artifact_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    return FileResponse(path=str(artifact_path), filename=Path(artifact_path).name)

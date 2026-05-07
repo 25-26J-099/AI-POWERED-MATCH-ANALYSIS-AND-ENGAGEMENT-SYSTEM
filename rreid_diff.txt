@@ -1,0 +1,13 @@
+diff --git a/backend/robust_reid.py b/backend/app/event_detection/robust_reid.py
+index 6d4f862..25ea5cb 100644
+--- a/backend/robust_reid.py
++++ b/backend/app/event_detection/robust_reid.py
+@@ -34,7 +34,7 @@ import torchvision.transforms as transforms
+ 
+ # Import temporal aggregator for enhanced ID smoothing
+ try:
+-    from temporal_aggregator import TemporalIDAggregator
++    from app.event_detection.temporal_aggregator import TemporalIDAggregator
+     TEMPORAL_AGGREGATOR_AVAILABLE = True
+ except ImportError:
+     TEMPORAL_AGGREGATOR_AVAILABLE = False

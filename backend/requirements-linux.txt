@@ -113,8 +113,9 @@ pyclipper==1.4.0
 pycparser>=2.21
 pycryptodome==3.23.0
 pydantic==2.13.3
-pydantic-settings==2.1.0
-# pydantic-core is a transitive dep of pydantic — version is managed by pydantic itself
+# pydantic-settings: prefect>=3.5.0 requires >2.2.1; pinning 2.1.0 conflicts.
+# pydantic-core is a transitive dep of pydantic — version is managed by pydantic.
+# Let pip resolve both from their respective upstream constraints.
 pyDeprecate==0.4.0
 pydub==0.25.1
 Pygments==2.19.2

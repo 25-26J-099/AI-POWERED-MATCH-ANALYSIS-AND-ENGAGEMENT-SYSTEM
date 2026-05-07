@@ -28,9 +28,15 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    # Paths that serve Swagger/ReDoc UI — need CDN access, skip restrictive CSP
+    _DOCS_PATHS = {"/docs", "/redoc", "/openapi.json"}
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         response = await call_next(request)
         if not settings.SECURITY_ENABLE_HEADERS:
+            return response
+        # Skip strict CSP for API docs so swagger-ui CDN resources load correctly
+        if request.url.path in self._DOCS_PATHS:
             return response
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")

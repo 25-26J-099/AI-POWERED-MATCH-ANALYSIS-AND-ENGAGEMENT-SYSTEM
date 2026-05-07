@@ -10,8 +10,8 @@
 
 substitutions:
   _REGION: us-central1
-  _GCE_ZONE: us-east4-c
-  _GCE_VM: football-ai-backend
+  _GCE_ZONE: us-east1-b
+  _GCE_VM: football-ai-backend-new
   _CLOUD_RUN_SVC: football-ai-frontend
   _AR_REPO: football-ai
   _GCS_BUCKET: football-ai-495521

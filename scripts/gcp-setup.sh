@@ -24,11 +24,11 @@ GSUTIL="/opt/homebrew/bin/gsutil"
 
 $GCLOUD config set project "${PROJECT_ID}" --quiet
 REGION="us-central1"
-ZONE="us-east4-c"
+ZONE="us-east1-b"
 BUCKET="football-ai-495521"
 AR_REPO="football-ai"
 SQL_INSTANCE="football-ai-db"
-VM_NAME="football-ai-backend"
+VM_NAME="football-ai-backend-new"
 SA_NAME="football-ai-sa"
 
 echo "=== Setting up GCP project: ${PROJECT_ID} ==="
@@ -160,7 +160,7 @@ echo "========================================================================="
 echo ""
 
 # ── 7. GCE GPU VM (NVIDIA L4) ──────────────────────────────────────────────────
-echo ">>> Creating GCE VM ${VM_NAME} (g2-standard-8 · 1x NVIDIA L4 24GB · ~\$0.89/hr)..."
+echo ">>> Creating GCE VM ${VM_NAME} (g2-standard-32 · 1x NVIDIA L4 24GB · ~\$1.49/hr)..."
 echo "    This may take 2–3 minutes..."
 
 $GCLOUD compute instances create "${VM_NAME}" \

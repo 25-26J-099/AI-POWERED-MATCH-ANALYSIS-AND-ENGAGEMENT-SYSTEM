@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = Field(default="./uploads", description="Directory for uploaded videos")
     COMMENTARY_DIR: str = Field(default="./commentary_videos", description="Directory for commentary output videos")
 
+    # ── Cloud Storage (GCS) ───────────────────────────────────────────────────
+    GCS_BUCKET: str = Field(
+        default="",
+        description="GCS bucket name for uploads and commentary output. Empty = local storage only.",
+    )
+
     # ── OpenAI ────────────────────────────────────────────────────────────
     OPENAI_API_KEY: Optional[str] = Field(default=None, description="OpenAI API key for expert analysis")
     OPENAI_MODEL: str = Field(default="gpt-4o", description="OpenAI model to use")
@@ -54,6 +60,17 @@ class Settings(BaseSettings):
         description="Filename for the ESPCN super-resolution model in the shared HuggingFace repo",
     )
     HF_CACHE_DIR: str = Field(default="./model_cache", description="Local cache directory for HuggingFace models")
+    HF_TOKEN: Optional[str] = Field(
+        default=None,
+        description="HuggingFace access token — required only if model repos are private",
+    )
+
+    # ── MLflow (experiment tracking + model registry) ─────────────────────────
+    MLFLOW_TRACKING_URI: Optional[str] = Field(
+        default=None,
+        description="MLflow tracking server URI (e.g. http://mlflow:5000). "
+                    "When set, model_loader falls back to the registry if HF download fails.",
+    )
 
     # ── GPU / Deployment ──────────────────────────────────────────────────
     GPU_PROVIDER: Optional[str] = Field(default=None, description="GPU provider: 'vastai', 'runpod', or None for local")
@@ -132,9 +149,11 @@ class Settings(BaseSettings):
     COMMENTARY_EDUCATIONAL_MODE: bool = Field(default=False, description="Default educational mode for commentary")
     COMMENTARY_STYLE: str = Field(default="neutral", description="Default commentary tone/style")
     OLLAMA_URL: str = Field(default="http://localhost:11434", description="Base URL for the local Ollama server")
-    OLLAMA_BINARY: Optional[str] = Field(default=None, description="Optional absolute path to ollama.exe")
-    SOX_BINARY: Optional[str] = Field(default=None, description="Optional absolute path to sox.exe for Qwen TTS")
-    FFMPEG_BINARY: Optional[str] = Field(default=None, description="Optional absolute path to ffmpeg.exe for audio/video composition")
+    # Binary paths — defaults to system PATH names (correct for Linux/Docker).
+    # Windows/macOS users can override with absolute paths in .env.
+    OLLAMA_BINARY: str = Field(default="ollama", description="ollama binary path or name (defaults to 'ollama' on PATH)")
+    SOX_BINARY: str = Field(default="sox", description="sox binary path or name (defaults to 'sox' on PATH)")
+    FFMPEG_BINARY: str = Field(default="ffmpeg", description="ffmpeg binary path or name (defaults to 'ffmpeg' on PATH)")
     COMMENTARY_AUDIENCE_MODEL_PATH: str = Field(
         default="./app/commentary/audience_model.json",
         description="Path to the learned audience-model bundle used for automatic commentary-level inference",

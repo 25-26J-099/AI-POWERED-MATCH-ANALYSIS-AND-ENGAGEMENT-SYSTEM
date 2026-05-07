@@ -1,0 +1,108 @@
+# Cloud Build CI/CD pipeline
+# Trigger: push to main branch
+# Requires substitutions set in the Cloud Build trigger:
+#   _REGION         — e.g. us-central1
+#   _GCE_ZONE       — e.g. us-central1-a
+#   _GCE_VM         — e.g. football-ai-backend
+#   _CLOUD_RUN_SVC  — e.g. football-ai-frontend
+#   _AR_REPO        — Artifact Registry repo name, e.g. football-ai
+#   _GCS_BUCKET     — GCS bucket name
+
+substitutions:
+  _REGION: us-central1
+  _GCE_ZONE: us-east4-c
+  _GCE_VM: football-ai-backend
+  _CLOUD_RUN_SVC: football-ai-frontend
+  _AR_REPO: football-ai
+  _GCS_BUCKET: football-ai-495521
+
+steps:
+
+  # ── 1. Build backend image ──────────────────────────────────────────────────
+  - id: build-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend:$SHORT_SHA
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend:latest
+      - --cache-from
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend:latest
+      - ./backend
+    waitFor: ['-']
+
+  # ── 2. Build frontend image ─────────────────────────────────────────────────
+  - id: build-frontend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/frontend:$SHORT_SHA
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/frontend:latest
+      - --cache-from
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/frontend:latest
+      - ./frontend
+    waitFor: ['-']
+
+  # ── 3. Push backend image ───────────────────────────────────────────────────
+  - id: push-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend
+    waitFor: [build-backend]
+
+  # ── 4. Push frontend image ──────────────────────────────────────────────────
+  - id: push-frontend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/frontend
+    waitFor: [build-frontend]
+
+  # ── 5. Deploy frontend to Cloud Run ────────────────────────────────────────
+  - id: deploy-frontend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_CLOUD_RUN_SVC}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/frontend:$SHORT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=80
+      - --memory=512Mi
+      - --cpu=1
+    waitFor: [push-frontend]
+
+  # ── 6. Rolling update on GCE VM — pull new images and restart ──────────────
+  - id: deploy-backend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - compute
+      - ssh
+      - ${_GCE_VM}
+      - --zone=${_GCE_ZONE}
+      - --command
+      - |
+        cd /app && \
+        docker compose pull backend ollama mlflow && \
+        docker compose up -d --remove-orphans backend ollama mlflow
+    waitFor: [push-backend]
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/backend:$SHORT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/frontend:$SHORT_SHA
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+  # Cloud Build service account needs roles/compute.osLogin + roles/iam.serviceAccountUser
+  # to SSH into the GCE VM.

@@ -1,0 +1,5 @@
+[core]
+    remote = gcs
+    autostage = true
+['remote "gcs"']
+    url = gs://football-ai-495521/dvc-store

@@ -17,6 +17,7 @@ from app.models.models import Match, Team
 from app.services.dependencies import get_job_service
 from app.services.merged_pipeline_service import process_match_video
 from app.services.team_color_service import detect_team_colors_preview
+from app.utils.storage import upload_to_gcs
 
 router = APIRouter()
 
@@ -81,6 +82,14 @@ async def upload_video(
                 outfile.write(chunk)
     finally:
         await video.close()
+
+    # Mirror to GCS asynchronously (no-op when GCS_BUCKET is not configured)
+    gcs_key = f"uploads/{stored_name}"
+    asyncio.create_task(
+        asyncio.get_event_loop().run_in_executor(
+            None, upload_to_gcs, str(video_path), gcs_key
+        )
+    )
 
     job_service = get_job_service()
     job = job_service.create_job()

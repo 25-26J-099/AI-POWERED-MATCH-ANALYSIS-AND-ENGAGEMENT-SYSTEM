@@ -55,15 +55,41 @@ def _download_from_hf(repo_id: str, filename: str) -> Optional[str]:
     try:
         from huggingface_hub import hf_hub_download
 
+        token = settings.HF_TOKEN or None  # None = public repos / env HF_TOKEN
         return hf_hub_download(
             repo_id=repo_id,
             filename=filename,
             cache_dir=settings.HF_CACHE_DIR,
+            token=token,
             force_download=False,
             local_files_only=False,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not download %s from %s: %s", filename, repo_id, exc)
+        return None
+
+
+def _load_from_mlflow_registry(model_name: str) -> Optional[Any]:
+    """Fallback: load the latest Production model from the MLflow model registry.
+
+    Only attempted when MLFLOW_TRACKING_URI is configured and the HF download failed.
+    """
+    if not settings.MLFLOW_TRACKING_URI:
+        return None
+    try:
+        import mlflow
+
+        mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
+        client = mlflow.MlflowClient()
+        versions = client.get_latest_versions(model_name, stages=["Production"])
+        if not versions:
+            logger.warning("No Production version found for MLflow model '%s'", model_name)
+            return None
+        model_uri = versions[0].source
+        logger.info("Loading '%s' from MLflow registry: %s", model_name, model_uri)
+        return mlflow.sklearn.load_model(model_uri)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("MLflow registry load failed for '%s': %s", model_name, exc)
         return None
 
 
@@ -134,14 +160,22 @@ def _load_style_autoencoder(repo_id: str, filename: str = "style_autoencoder.pth
 def load_xg_model():
     global _xg_model
     if _xg_model is _UNSET:
-        _xg_model = _load_pickle_model(settings.HF_XG_REPO, "xg_model.pkl") or _FAILED
+        _xg_model = (
+            _load_pickle_model(settings.HF_XG_REPO, "xg_model.pkl")
+            or _load_from_mlflow_registry("xg-production")
+            or _FAILED
+        )
     return None if _xg_model is _FAILED else _xg_model
 
 
 def load_vaep_score_model():
     global _vaep_scoring_model
     if _vaep_scoring_model is _UNSET:
-        _vaep_scoring_model = _load_pickle_model(settings.HF_VAEP_SCORING_REPO, "vaep_score_model_2.pkl") or _FAILED
+        _vaep_scoring_model = (
+            _load_pickle_model(settings.HF_VAEP_SCORING_REPO, "vaep_score_model_2.pkl")
+            or _load_from_mlflow_registry("vaep-scoring-production")
+            or _FAILED
+        )
         if _vaep_scoring_model is _FAILED:
             logger.warning(
                 "VAEP scoring model unavailable. Install compatible runtime dependencies such as lightgbm/cloudpickle if required."
@@ -152,7 +186,11 @@ def load_vaep_score_model():
 def load_vaep_concede_model():
     global _vaep_conceding_model
     if _vaep_conceding_model is _UNSET:
-        _vaep_conceding_model = _load_pickle_model(settings.HF_VAEP_CONCEDING_REPO, "vaep_concede_model_2.pkl") or _FAILED
+        _vaep_conceding_model = (
+            _load_pickle_model(settings.HF_VAEP_CONCEDING_REPO, "vaep_concede_model_2.pkl")
+            or _load_from_mlflow_registry("vaep-conceding-production")
+            or _FAILED
+        )
         if _vaep_conceding_model is _FAILED:
             logger.warning(
                 "VAEP conceding model unavailable. Install compatible runtime dependencies such as lightgbm/cloudpickle if required."

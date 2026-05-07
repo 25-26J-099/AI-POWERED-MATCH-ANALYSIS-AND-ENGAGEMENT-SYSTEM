@@ -1,0 +1,10 @@
+# DVC ignore file — paths that DVC should never track
+backend/venv/
+backend/model_cache/models--*/   # HuggingFace cache (managed by HF Hub, not DVC)
+backend/__pycache__/
+backend/**/__pycache__/
+backend/uploads/
+backend/commentary_videos/
+frontend/node_modules/
+frontend/dist/
+.claude/

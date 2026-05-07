@@ -128,17 +128,31 @@ async def monitor_tracking_job(match_id: int, tracking_job_id: str) -> None:
     )
 
     last_status: str | None = None
+    last_pct: float = -1.0
     poll_count = 0
 
     while True:
         record = job_service.get_job(tracking_job_id)
         poll_count += 1
+
+        # Surface frame-level progress to match status_detail
+        if record.progress:
+            p = record.progress
+            current_pct = p.get("pct", 0.0)
+            if current_pct != last_pct:
+                last_pct = current_pct
+                detail = (
+                    f"Tracking: frame {p['frame']}/{p['total']} ({p['pct']:.1f}%)"
+                )
+                await _update_match(match_id, status="tracking", status_detail=detail)
+
         if record.status != last_status or poll_count % 15 == 0:
             logger.info(
-                "Tracking job poll match_id=%s tracking_job_id=%s status=%s",
+                "Tracking job poll match_id=%s tracking_job_id=%s status=%s progress=%s",
                 match_id,
                 tracking_job_id,
                 record.status,
+                record.progress,
             )
             last_status = record.status
         if record.status == "completed":

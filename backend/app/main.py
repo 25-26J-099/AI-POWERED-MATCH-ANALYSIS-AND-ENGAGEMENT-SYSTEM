@@ -87,6 +87,10 @@ def create_app() -> FastAPI:
     for mount_path, directory in static_dirs.items():
         app.mount(mount_path, StaticFiles(directory=str(directory)), name=mount_path.replace("/", "_"))
 
+    @app.get("/")
+    async def root() -> dict:
+        return {"status": "ok", "service": "Football AI Backend", "docs": "/docs", "health": "/health"}
+
     @app.get("/health")
     async def health() -> dict:
         return {

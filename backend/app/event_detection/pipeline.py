@@ -252,7 +252,7 @@ class MatchAnalysisPipeline:
 
             track.team_id = self.team_assigner.assign_team(frame, track.bbox, tid)
 
-    def process_video(self, input_path: str, output_path: str, json_path: str = ""):
+    def process_video(self, input_path: str, output_path: str, json_path: str = "", progress_callback=None):
         reader = VideoReader(
             input_path,
             frame_skip=self.config.optimization.frame_skip,
@@ -437,6 +437,11 @@ class MatchAnalysisPipeline:
                         f"{avg_fps:.1f} FPS | Players: {len(player_tracks)} | "
                         f"Events: {len(self.event_detector.events)}"
                     )
+                    if progress_callback is not None:
+                        try:
+                            progress_callback(frame_idx, reader.total_frames or 0, pct)
+                        except Exception:
+                            pass  # never let a progress callback crash the pipeline
             completed_naturally = True
 
         except KeyboardInterrupt:

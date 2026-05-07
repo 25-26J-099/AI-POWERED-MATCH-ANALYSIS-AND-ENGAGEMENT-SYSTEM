@@ -134,11 +134,13 @@ async def get_match_status(match_id: int, db: AsyncSession = Depends(get_db)):
     match = await get_match_or_404(match_id, db)
     tracking_job_status = None
     tracking_job_error = None
+    job_progress = None
     if match.tracking_job_id:
         try:
             job = get_job_service().get_job(match.tracking_job_id)
             tracking_job_status = job.status
             tracking_job_error = job.error
+            job_progress = job.progress  # {frame, total, pct} or None
         except KeyError:
             tracking_job_status = "missing"
     return {
@@ -149,6 +151,7 @@ async def get_match_status(match_id: int, db: AsyncSession = Depends(get_db)):
         "team_colors": (match.tracking_artifacts or {}).get("team_colors", []),
         "tracking_job_status": tracking_job_status,
         "tracking_job_error": tracking_job_error,
+        "progress": job_progress,
     }
 
 

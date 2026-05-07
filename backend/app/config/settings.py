@@ -54,6 +54,10 @@ class Settings(BaseSettings):
         description="Filename for the ESPCN super-resolution model in the shared HuggingFace repo",
     )
     HF_CACHE_DIR: str = Field(default="./model_cache", description="Local cache directory for HuggingFace models")
+    HF_TOKEN: Optional[str] = Field(
+        default=None,
+        description="HuggingFace access token — required only if model repos are private",
+    )
 
     # ── GPU / Deployment ──────────────────────────────────────────────────
     GPU_PROVIDER: Optional[str] = Field(default=None, description="GPU provider: 'vastai', 'runpod', or None for local")

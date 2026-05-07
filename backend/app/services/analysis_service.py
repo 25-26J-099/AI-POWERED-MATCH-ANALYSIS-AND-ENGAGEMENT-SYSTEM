@@ -135,6 +135,7 @@ class AnalysisService:
         output_video: Path,
         output_json: Path,
         options: AnalysisRequestOptions,
+        progress_callback=None,
     ) -> Dict[str, Any]:
         self.validate_ml_model_path(options)
         config = self.build_pipeline_config(options, input_video, output_video, output_json)
@@ -145,6 +146,7 @@ class AnalysisService:
             str(input_video),
             str(output_video),
             str(output_json),
+            progress_callback=progress_callback,
         )
 
         artifact_paths = {
@@ -183,11 +185,15 @@ class AnalysisService:
         input_path: str | Path,
         options: AnalysisRequestOptions,
         output_name: Optional[str] = None,
+        progress_callback=None,
     ) -> Dict[str, Any]:
         resolved_input = self.resolve_input_path(input_path)
         output_dir = self.base_output_dir / "api_jobs" / job_id
         output_video, output_json = self.create_output_paths(output_dir, resolved_input, output_name)
-        result = self.run_analysis_with_paths(resolved_input, output_video, output_json, options)
+        result = self.run_analysis_with_paths(
+            resolved_input, output_video, output_json, options,
+            progress_callback=progress_callback,
+        )
         result["job_output_dir"] = str(output_dir.resolve())
         return result
 

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { uploadVideo, validateFootballVideo } from '../api/client';
+import { uploadVideo, validateFootballVideo, getMatchStatus } from '../api/client';
 
 const COMMENTARY_LEVELS = ['Auto', 'Beginner', 'Intermediate', 'Expert'] as const;
 const COMMENTARY_VERBOSITY = ['low', 'medium', 'high'] as const;
@@ -17,6 +17,8 @@ export default function Upload() {
     const [educationalMode, setEducationalMode] = useState(false);
     const [progress, setProgress] = useState(0);
     const [uploading, setUploading] = useState(false);
+    const [tracking, setTracking] = useState(false);
+    const [trackingProgress, setTrackingProgress] = useState<{ frame: number; total: number; pct: number } | null>(null);
     const [validatingFile, setValidatingFile] = useState(false);
     const [pendingFileName, setPendingFileName] = useState('');
     const [validationMessage, setValidationMessage] = useState('');
@@ -91,11 +93,34 @@ export default function Upload() {
                 educationalMode,
                 footballKnowledge,
             }, setProgress);
-            navigate(`/teams/${response.data.match_id}`);
+
+            const matchId = response.data.match_id;
+
+            // Switch to tracking phase — poll until pipeline finishes
+            setUploading(false);
+            setTracking(true);
+            setTrackingProgress(null);
+
+            const TERMINAL_STATUSES = new Set(['completed', 'failed', 'analytics_processing', 'done']);
+            let done = false;
+            while (!done) {
+                await new Promise<void>(r => setTimeout(r, 2000));
+                try {
+                    const statusResp = await getMatchStatus(matchId);
+                    const { status, progress: prog } = statusResp.data;
+                    if (prog) setTrackingProgress(prog);
+                    if (TERMINAL_STATUSES.has(status)) done = true;
+                } catch {
+                    // network glitch — keep polling
+                }
+            }
+
+            navigate(`/teams/${matchId}`);
         } catch (err: any) {
             setError(err.response?.data?.detail || 'Upload failed');
-        } finally {
             setUploading(false);
+        } finally {
+            setTracking(false);
         }
     };
 
@@ -327,13 +352,46 @@ export default function Upload() {
                             </p>
                         </div>
                     )}
+
+                    {tracking && (
+                        <div style={{ marginBottom: '16px' }}>
+                            <p style={{ fontWeight: 600, marginBottom: '8px' }}>
+                                🎯 Analysing match footage...
+                            </p>
+                            <div
+                                style={{
+                                    height: '10px',
+                                    borderRadius: '5px',
+                                    background: 'var(--bg-card)',
+                                    overflow: 'hidden',
+                                    marginBottom: '6px',
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        height: '100%',
+                                        width: `${trackingProgress?.pct ?? 0}%`,
+                                        background: 'var(--gradient-primary)',
+                                        borderRadius: '5px',
+                                        transition: 'width 0.6s ease',
+                                    }}
+                                />
+                            </div>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                                {trackingProgress
+                                    ? `Frame ${trackingProgress.frame.toLocaleString()} / ${trackingProgress.total.toLocaleString()} — ${trackingProgress.pct.toFixed(1)}%`
+                                    : 'Starting tracking pipeline…'}
+                            </p>
+                        </div>
+                    )}
+
                     <button
                         className="btn-primary"
                         onClick={handleUpload}
-                        disabled={uploading || validatingFile || !file}
+                        disabled={uploading || tracking || validatingFile || !file}
                         style={{ width: '100%', padding: '16px' }}
                     >
-                        {uploading ? 'Uploading and validating...' : `Upload and Start Analysis (${commentaryLevel}) ->`}
+                        {tracking ? 'Tracking in progress…' : uploading ? 'Uploading and validating...' : `Upload and Start Analysis (${commentaryLevel}) ->`}
                     </button>
                 </div>
             )}

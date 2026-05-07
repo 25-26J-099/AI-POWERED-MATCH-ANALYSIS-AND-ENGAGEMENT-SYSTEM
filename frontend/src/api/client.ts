@@ -24,6 +24,27 @@ export type UploadCommentaryOptions = {
     awayTeamName?: string,
 };
 
+export type FootballVideoValidation = {
+    is_valid: boolean,
+    status: 'accepted' | 'uncertain' | 'invalid' | 'skipped' | string,
+    confidence: number,
+    message: string,
+    sampled_frames: number,
+    positive_frame_ratio: number,
+    evidence: Record<string, number>,
+    frame_scores: Record<string, number>[],
+};
+
+export const validateFootballVideo = (file: File) =>
+    api.post<FootballVideoValidation>('/validate-football-video', (() => {
+        const f = new FormData();
+        f.append('video', file);
+        return f;
+    })(), {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000,
+    });
+
 export const uploadVideo = (
     file: File,
     options: UploadCommentaryOptions,

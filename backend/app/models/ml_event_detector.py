@@ -17,6 +17,7 @@ import logging
 
 # Import the user's model architecture
 from app.models.event_detection_model import EventDetectionModel
+from app.event_detection.event_detector import normalize_event_type
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,14 @@ class MLEventDetector:
         except Exception as e:
             logger.error(f"[ML Detector] Error processing frame: {e}")
     
-    def predict(self):
+    @staticmethod
+    def _map_prediction_class(pred_class: str, event_mapping: Dict[str, str]) -> str:
+        """Map model labels to internal events without collapsing goals into shots."""
+        if pred_class == "Goal":
+            return "goal"
+        return normalize_event_type(event_mapping.get(pred_class, pred_class.lower()))
+
+    def predict(self, force: bool = False):
         """
         Run inference on current buffer.
         
@@ -155,8 +163,8 @@ class MLEventDetector:
         if len(self.frame_buffer) < self.temporal_window:
             return None
         
-        # Only run inference every N frames
-        if self.frame_count % self.inference_interval != 0:
+        # Only run inference every N frames, except at end-of-video flush.
+        if not force and self.frame_count % self.inference_interval != 0:
             return None
         
         try:
@@ -177,7 +185,7 @@ class MLEventDetector:
             pred_class = self.class_names[pred_idx]
             
             # Map to system event type
-            mapped_event = self.event_mapping.get(pred_class, pred_class.lower())
+            mapped_event = self._map_prediction_class(pred_class, self.event_mapping)
             
             return {
                 'class': pred_class,
@@ -226,7 +234,7 @@ class HybridEventSystem:
         
         logger.info("[Hybrid System] Initialized with rule + ML detectors")
     
-    def detect_events(self, frame, ball_pos, player_tracks, frame_idx, fps):
+    def detect_events(self, frame, ball_pos, player_tracks, frame_idx, fps, force: bool = False):
         """
         Detect events using hybrid approach.
         
@@ -243,10 +251,10 @@ class HybridEventSystem:
         events = []
         
         # Get ML prediction
-        ml_pred = self.ml_detector.predict()
+        ml_pred = self.ml_detector.predict(force=force)
         
         if ml_pred and ml_pred['confidence'] > self.ml_confidence_threshold:
-            event_type = ml_pred['mapped_event']
+            event_type = normalize_event_type(ml_pred['mapped_event'])
             
             # Check cooldown to avoid duplicate events
             last_frame = self.last_ml_events.get(event_type, -999)

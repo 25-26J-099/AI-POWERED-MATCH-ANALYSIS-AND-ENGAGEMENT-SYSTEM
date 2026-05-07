@@ -5,7 +5,7 @@ import torch.nn as nn
 from typing import List, Tuple
 import numpy as np
 import os
-from app.event_detection.event_detector import GameEvent
+from app.event_detection.event_detector import GameEvent, normalize_event_type
 
 class EventClassifier(nn.Module):
     """
@@ -150,7 +150,7 @@ class MLEventDetector:
         # Threshold
         conf_threshold = 0.7
         if confidences[0] > conf_threshold:
-            event_type = self.event_classes[predictions[0]]
+            event_type = normalize_event_type(self.event_classes[predictions[0]])
             
             # Skip "other" class
             if event_type != "other":

@@ -15,9 +15,9 @@ from app.config.settings import settings
 from app.database.database import get_db
 from app.models.models import Match, Team
 from app.services.dependencies import get_job_service
+from app.services.football_video_validator import validate_football_video
 from app.services.merged_pipeline_service import process_match_video
 from app.services.team_color_service import detect_team_colors_preview
-from app.utils.storage import upload_to_gcs
 
 router = APIRouter()
 
@@ -38,6 +38,38 @@ async def _get_team_color_match_lock(match_id: int) -> asyncio.Lock:
 
 class TeamMappingRequest(BaseModel):
     team_names: dict[int, str] = Field(..., min_length=2)
+
+
+@router.post("/validate-football-video")
+async def validate_uploaded_football_video(video: UploadFile = File(...)):
+    """Preflight-check a selected video before creating a match upload."""
+    if video.content_type and not video.content_type.startswith("video/"):
+        return {
+            "is_valid": False,
+            "status": "invalid",
+            "confidence": 0.0,
+            "message": "Please upload a video file.",
+            "sampled_frames": 0,
+            "positive_frame_ratio": 0.0,
+            "evidence": {},
+            "frame_scores": [],
+        }
+
+    filename = video.filename or "validation_video.mp4"
+    ext = Path(filename).suffix or ".mp4"
+    validation_dir = Path(settings.UPLOAD_DIR) / "validation"
+    validation_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = validation_dir / f"{uuid.uuid4().hex}{ext}"
+
+    try:
+        with temp_path.open("wb") as outfile:
+            while chunk := await video.read(1024 * 1024):
+                outfile.write(chunk)
+        validation = await asyncio.to_thread(validate_football_video, temp_path)
+        return validation.to_dict()
+    finally:
+        await video.close()
+        temp_path.unlink(missing_ok=True)
 
 
 @router.post("/upload-video")
@@ -83,12 +115,10 @@ async def upload_video(
     finally:
         await video.close()
 
-    # Mirror to GCS asynchronously (no-op when GCS_BUCKET is not configured).
-    # asyncio.to_thread() returns a coroutine — required by create_task().
-    # run_in_executor() returns a Future (not a coroutine) and would raise
-    # TypeError: a coroutine was expected → HTTP 500 on every upload.
-    gcs_key = f"uploads/{stored_name}"
-    asyncio.create_task(asyncio.to_thread(upload_to_gcs, str(video_path), gcs_key))
+    validation = await asyncio.to_thread(validate_football_video, video_path)
+    if not validation.is_valid:
+        video_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=validation.message)
 
     job_service = get_job_service()
     job = job_service.create_job()
@@ -126,6 +156,7 @@ async def upload_video(
             "football_knowledge": football_knowledge,
             "team_name_map": team_name_map,
             "original_filename": filename,
+            "football_video_validation": validation.to_dict(),
         },
         status="team_mapping_pending",
         status_detail="Video uploaded. Waiting for team color detection...",
@@ -145,7 +176,8 @@ async def upload_video(
         "football_knowledge": football_knowledge,
         "home_team_name": home_team.name if home_team else None,
         "away_team_name": away_team.name if away_team else None,
-        "message": "Video uploaded. Proceed to team color mapping.",
+        "football_video_validation": validation.to_dict(),
+        "message": validation.message if validation.status == "uncertain" else "Video uploaded. Proceed to team color mapping.",
     }
 
 
@@ -274,6 +306,16 @@ async def proceed_pipeline(match_id: int, db: AsyncSession = Depends(get_db)):
             status_code=409,
             detail=f"Pipeline already started or completed (status: {match.status})",
         )
+
+    artifacts = dict(match.tracking_artifacts or {})
+    validation = await asyncio.to_thread(validate_football_video, match.video_path)
+    artifacts["football_video_validation"] = validation.to_dict()
+    match.tracking_artifacts = artifacts
+    if not validation.is_valid:
+        match.status = "failed"
+        match.status_detail = validation.message
+        await db.commit()
+        raise HTTPException(status_code=422, detail=validation.message)
 
     match.status = "uploading"
     match.status_detail = "Lineup submitted. Starting tracking pipeline..."

@@ -14,13 +14,11 @@ Usage:
 """
 
 import copy
-import glob
 import json
 import math
 import os
 import random
 import re
-import shutil
 import sys
 import tempfile
 import threading
@@ -54,6 +52,10 @@ SET_PIECE_EXCLUDE_RADIUS = 3.0 # PBP exclusion radius around corner/free-kick ta
 GOAL_FOUL_TAC_DELAY = 2.5     # Tactical commentary delayed after PBP for goal/foul events
 MIN_COMMENTARY_GAP = 1.5      # Minimum seconds between any two commentary entries
 CROWD_DUCK_DB = -8             # How much to duck crowd audio when commentary plays
+MAX_SILENCE_SECONDS = 6.0          # Fill real post-TTS dead air longer than this
+MAX_PLANNED_SILENCE_SECONDS = MAX_SILENCE_SECONDS
+GAP_FILL_TARGET_SECONDS = 5.0      # Preferred point for continuity beats inside a gap
+GAP_FILL_EDGE_BUFFER_SECONDS = 2.5 # Keep fillers away from existing commentary
 
 # -- Dynamic Tactical Cooldown
 TAC_SPATIAL_COOLDOWN_SECONDS = 50.0    # Min gap between spatial TAC commentary events
@@ -62,6 +64,7 @@ TAC_CLIMAX_EXCLUSION_AFTER  = 2.0     # Block TAC N seconds after a climax event
 
 # -- Climax Phase-of-Play (PBP Stitching)
 CLIMAX_LOOKBACK_ANCHORS = 5           # Max anchors to stitch before a climax event
+CLIMAX_MIN_BUILDUP_ANCHORS = 3        # Minimum buildup anchors required for a true phase
 CLIMAX_PHASE_SEPARATOR = '... '       # Separator between stitched PBP lines
 CLIMAX_MIN_ANCHOR_LOOKBACK_SECONDS = 20.0
 
@@ -72,75 +75,6 @@ MIN_AUDIO_GAP_SECONDS = 0.30           # Minimum gap between any two audio clips
 
 TEMP_DIR = os.path.join(tempfile.gettempdir(), "merged_commentary")
 os.makedirs(TEMP_DIR, exist_ok=True)
-
-
-def _prepend_binary_dir(binary_path):
-    if not binary_path or not os.path.isfile(binary_path):
-        return None
-    binary_dir = os.path.dirname(os.path.abspath(binary_path))
-    path_parts = os.environ.get("PATH", "").split(os.pathsep)
-    if binary_dir not in path_parts:
-        os.environ["PATH"] = binary_dir + os.pathsep + os.environ.get("PATH", "")
-    return os.path.abspath(binary_path)
-
-
-def _resolve_binary(executable_name, env_name, candidate_paths=None):
-    configured = _prepend_binary_dir(os.environ.get(env_name))
-    if configured:
-        return configured
-
-    found = shutil.which(executable_name)
-    if found:
-        _prepend_binary_dir(found)
-        return found
-
-    for candidate in candidate_paths or []:
-        for path in glob.glob(os.path.expandvars(os.path.expanduser(candidate))):
-            resolved = _prepend_binary_dir(path)
-            if resolved:
-                return resolved
-    return None
-
-
-def configure_external_audio_tools():
-    """Make SoX/ffmpeg discoverable even when Uvicorn starts from a stale PATH."""
-    local_appdata = os.environ.get("LOCALAPPDATA", "")
-    sox_candidates = [
-        os.path.join(local_appdata, "Microsoft", "WinGet", "Packages", "ChrisBagwell.SoX_*", "sox-*", "sox.exe"),
-        r"C:\Program Files*\sox*\sox.exe",
-    ]
-    ffmpeg_candidates = [
-        os.path.join(SCRIPT_DIR, ".venv", "Lib", "site-packages", "imageio_ffmpeg", "binaries", "ffmpeg*.exe"),
-        os.path.join(SCRIPT_DIR, ".venv", "lib", "site-packages", "imageio_ffmpeg", "binaries", "ffmpeg*.exe"),
-    ]
-
-    sox_path = _resolve_binary("sox", "SOX_BINARY", sox_candidates)
-
-    ffmpeg_path = os.environ.get("IMAGEIO_FFMPEG_EXE") or _resolve_binary("ffmpeg", "FFMPEG_BINARY", ffmpeg_candidates)
-    if not ffmpeg_path:
-        try:
-            import imageio_ffmpeg
-
-            ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-        except Exception:
-            ffmpeg_path = None
-    if ffmpeg_path:
-        _prepend_binary_dir(ffmpeg_path)
-        if os.path.basename(ffmpeg_path).lower() != "ffmpeg.exe":
-            shim_dir = os.path.join(TEMP_DIR, "bin")
-            os.makedirs(shim_dir, exist_ok=True)
-            shim_path = os.path.join(shim_dir, "ffmpeg.exe")
-            try:
-                if not os.path.exists(shim_path) or os.path.getsize(shim_path) != os.path.getsize(ffmpeg_path):
-                    shutil.copy2(ffmpeg_path, shim_path)
-                ffmpeg_path = shim_path
-            except Exception:
-                pass
-            _prepend_binary_dir(ffmpeg_path)
-        os.environ["IMAGEIO_FFMPEG_EXE"] = ffmpeg_path
-        os.environ["FFMPEG_BINARY"] = ffmpeg_path
-
-    return sox_path, ffmpeg_path
 
 
 # ─────────────────────────────────────────────────────────────
@@ -269,6 +203,76 @@ def get_wav_duration(wav_path):
         return 0.0
 
 
+def audio_entry_end(entry):
+    """Return the scheduled audio end time for an entry."""
+    return entry.get("video_ts", 0.0) + entry.get("audio_duration", 0.0)
+
+
+def is_climax_audio_entry(entry):
+    return bool(entry.get("is_climax_phase") or entry.get("is_climax_direct") or entry.get("is_goal"))
+
+
+def resolve_audio_collisions(timeline, min_gap=MIN_AUDIO_GAP_SECONDS):
+    """
+    Guarantee serialized commentary after real TTS durations are known.
+
+    Climax audio wins over nearby non-climax audio. Routine entries are shifted
+    after the previous confirmed audio, which prevents PBP/TAC double-voicing.
+    """
+    active = [
+        entry for entry in timeline
+        if entry.get("audio_path") and entry.get("audio_duration", 0.0) > 0.0
+    ]
+    active.sort(key=lambda e: e.get("video_ts", 0.0))
+
+    resolved = []
+    for entry in active:
+        entry["drop_audio"] = False
+        while resolved:
+            prev = resolved[-1]
+            prev_end = audio_entry_end(prev)
+            if entry["video_ts"] >= prev_end + min_gap:
+                break
+
+            if is_climax_audio_entry(entry) and not is_climax_audio_entry(prev):
+                print(
+                    f"  [AUDIO COLLISION] Dropping {prev.get('commentator')} "
+                    f"@ {prev.get('video_ts', 0.0):.1f}s so climax @ "
+                    f"{entry.get('video_ts', 0.0):.1f}s is clean."
+                )
+                prev["drop_audio"] = True
+                resolved.pop()
+                continue
+
+            if is_climax_audio_entry(prev) and not is_climax_audio_entry(entry):
+                new_start = prev_end + min_gap
+                print(
+                    f"  [AUDIO SHIFT] Moving {entry.get('commentator')} "
+                    f"{entry.get('video_ts', 0.0):.1f}s -> {new_start:.1f}s "
+                    "after climax audio."
+                )
+                entry["video_ts"] = new_start
+                break
+
+            new_start = prev_end + min_gap
+            print(
+                f"  [AUDIO SHIFT] Moving {entry.get('commentator')} "
+                f"{entry.get('video_ts', 0.0):.1f}s -> {new_start:.1f}s "
+                "to prevent overlap."
+            )
+            entry["video_ts"] = new_start
+            break
+
+        if not resolved or entry["video_ts"] >= audio_entry_end(resolved[-1]) + min_gap:
+            resolved.append(entry)
+            continue
+        resolved.append(entry)
+
+    ordered = [entry for entry in timeline if not entry.get("drop_audio")]
+    ordered.sort(key=lambda e: e.get("video_ts", 0.0))
+    return ordered
+
+
 # ─────────────────────────────────────────────────────────────
 # PHASE-OF-PLAY PBP STITCHING
 # ─────────────────────────────────────────────────────────────
@@ -289,27 +293,16 @@ def stitch_pbp_lines(lines):
 def _build_climax_llm_prompt(flattened_stream, intensity, anchor_event, is_goal):
     """LLM prompt for climax anchor with relaxed word limit."""
     parts = [f"Intensity: {intensity}"]
-    allowed_names = sorted(pbp.collect_allowed_names([anchor_event]))
-    if allowed_names:
-        parts.append(
-            "[NAME RULE: Use only names that appear in the event stream. "
-            f"Allowed exact names for this anchor: {', '.join(allowed_names)}. "
-            "Do not invent real player names. If the data says Player 17, say Player 17.]"
-        )
-    parts.append(
-        "[FACT RULE: Describe only the action and outcome present in the event stream. "
-        "Do not invent corners, crosses, goals, assists, empty nets, saves, or fouls unless they are explicitly shown.]"
-    )
     if is_goal:
         parts.append(
             "[SYSTEM INSTRUCTION: This is a GOAL. Generate a short, explosive, "
-            "celebratory exclamation. Use dramatic language. Keep it under 15 words.]"
+            "celebratory exclamation that connects naturally to the build-up.]"
         )
     else:
         parts.append(
             "[SYSTEM INSTRUCTION: This is a climax moment (shot/chance). "
             "Generate a short, punchy call connecting to the build-up. "
-            "Do NOT use GOAL. Keep it under 12 words.]"
+            "Do NOT use GOAL unless the event stream explicitly says it is a goal.]"
         )
     parts.append("")
     parts.append("Flattened Event Stream:")
@@ -317,10 +310,49 @@ def _build_climax_llm_prompt(flattened_stream, intensity, anchor_event, is_goal)
     return "\n".join(parts)
 
 
+def _build_phase_buildup_prompt(flattened_stream, intensity, anchor_event):
+    parts = [f"Intensity: {intensity}"]
+    parts.append(
+        "[SYSTEM INSTRUCTION: Generate a short, punchy play-by-play call that "
+        "connects to the previous action. Use one natural broadcast sentence. "
+        "Do not invent players, outcomes, goals, fouls, or assists beyond the event stream.]"
+    )
+    parts.append("")
+    parts.append("Flattened Event Stream:")
+    parts.append(flattened_stream)
+    return "\n".join(parts)
+
+
+def is_phase_buildup_event(event):
+    return tac.get_event_type(event) in {"Pass", "Carry", "Dribble"}
+
+
+def _generate_phase_anchor_line(events, idx_360, anchor_idx, anchor_event, reason, llm_available):
+    if llm_available:
+        try:
+            frame_360 = idx_360.get(anchor_event.get("id"))
+            intensity = pbp.classify_intensity(anchor_event, frame_360)
+            context_events = pbp.build_context_window(events, anchor_idx, {"reason": reason})
+            flattened = pbp.build_flattened_stream(
+                context_events, anchor_event, {"reason": reason}, idx_360
+            )
+            prompt = _build_phase_buildup_prompt(flattened, intensity, anchor_event)
+            line = pbp.generate_commentary(prompt)
+        except Exception:
+            line = ""
+        if line:
+            return pbp.enforce_surname_only(line, events).strip()
+
+    return pbp.enforce_surname_only(
+        pbp.generate_template_commentary(events, anchor_idx, {"reason": reason}),
+        events,
+    ).strip()
+
+
 def build_climax_phase_timeline(events, threesixty_lookup, base_ts, climax_events, llm_available):
     """
-    For each climax event, gather preceding PBP anchors, stitch them together,
-    and return a single climax_phase entry per climax.
+    For each climax event, gather 3-5 uninterrupted buildup actions, stitch
+    them with the climax call, and return one flowing PBP entry.
     """
     print("\n=== Building Climax Phase-of-Play Timeline ===")
     phase_entries = []
@@ -330,86 +362,116 @@ def build_climax_phase_timeline(events, threesixty_lookup, base_ts, climax_event
         return phase_entries, subsumed_ids
 
     idx_360 = threesixty_lookup
-    all_anchors = pbp.detect_all_anchors(events, idx_360)
 
     for cx in climax_events:
         cx_ts = cx["video_ts"]
         cx_event_id = cx["event_id"]
         cx_event = cx["event"]
         is_goal = cx["is_goal"]
-
-        lookback_start = cx_ts - CLIMAX_MIN_ANCHOR_LOOKBACK_SECONDS
-        harvested = []
-        for anchor in all_anchors:
-            a_ts = event_video_seconds(anchor["event"], base_ts)
-            a_id = anchor["event"].get("id")
-            if a_id == cx_event_id or is_climax_event(anchor["event"]):
-                continue
-            if lookback_start <= a_ts < cx_ts:
-                harvested.append((a_ts, anchor))
-
-        harvested.sort(key=lambda x: x[0])
-        harvested = harvested[-CLIMAX_LOOKBACK_ANCHORS:]
-
-        commentary_lines = []
-        phase_event_ids = set()
-        t_start = cx_ts
-
-        for a_ts, anchor in harvested:
-            anchor_idx = anchor["index"]
-            anchor_event = anchor["event"]
-            reason = anchor.get("reason", "climax_phase_buildup")
-            a_id = anchor_event.get("id")
-            phase_event_ids.add(a_id)
-            line = pbp.generate_template_commentary(events, anchor_idx, {"reason": reason})
-            line = pbp.ensure_allowed_commentary_names(line, events, anchor_idx, {"reason": reason})
-            if line:
-                commentary_lines.append(line)
-            if a_ts < t_start:
-                t_start = a_ts
-
         cx_idx = next(
             (i for i, ev in enumerate(events) if tac.get_event_id(ev) == cx_event_id), None
         )
-        if cx_idx is not None:
-            if llm_available and pbp.is_llm_commentary_event(cx_event):
-                frame_360 = idx_360.get(cx_event_id)
-                intensity = pbp.classify_intensity(cx_event, frame_360)
-                ctx_events = pbp.build_context_window(events, cx_idx, {"reason": "climax"})
-                flattened = pbp.build_flattened_stream(
-                    ctx_events, cx_event, {"reason": "climax"}, idx_360
-                )
-                prompt = _build_climax_llm_prompt(flattened, intensity, cx_event, is_goal)
-                climax_line = pbp.generate_commentary(prompt)
-                climax_line = pbp.ensure_allowed_commentary_names(
-                    climax_line,
-                    events,
-                    cx_idx,
-                    {"reason": "goal" if is_goal else "shot"},
-                )
-            else:
-                climax_line = pbp.generate_template_commentary(
-                    events, cx_idx, {"reason": "goal" if is_goal else "shot"}
-                )
-                climax_line = pbp.ensure_allowed_commentary_names(
-                    climax_line,
-                    events,
-                    cx_idx,
-                    {"reason": "goal" if is_goal else "shot"},
-                )
-            if climax_line:
-                commentary_lines.append(climax_line)
+        if cx_idx is None:
+            continue
+
+        lookback_start = cx_ts - CLIMAX_MIN_ANCHOR_LOOKBACK_SECONDS
+        climax_possession = cx_event.get("possession")
+        harvested = []
+
+        for idx in range(cx_idx - 1, -1, -1):
+            event = events[idx]
+            event_ts = event_video_seconds(event, base_ts)
+            if event_ts < lookback_start:
+                break
+            if is_climax_event(event):
+                break
+            if (
+                climax_possession is not None
+                and event.get("possession") is not None
+                and event.get("possession") != climax_possession
+            ):
+                break
+            if not is_phase_buildup_event(event):
+                continue
+            harvested.append((event_ts, idx, event))
+            if len(harvested) >= CLIMAX_LOOKBACK_ANCHORS:
+                break
+
+        harvested.sort(key=lambda item: item[0])
+
+        climax_line = ""
+        if llm_available and pbp.is_llm_commentary_event(cx_event):
+            frame_360 = idx_360.get(cx_event_id)
+            intensity = pbp.classify_intensity(cx_event, frame_360)
+            ctx_events = pbp.build_context_window(events, cx_idx, {"reason": "climax"})
+            flattened = pbp.build_flattened_stream(
+                ctx_events, cx_event, {"reason": "climax"}, idx_360
+            )
+            prompt = _build_climax_llm_prompt(flattened, intensity, cx_event, is_goal)
+            climax_line = pbp.generate_commentary(prompt)
+        if not climax_line:
+            climax_line = pbp.generate_template_commentary(
+                events, cx_idx, {"reason": "goal" if is_goal else "shot"}
+            )
+        climax_line = pbp.enforce_surname_only(climax_line, events).strip()
+        if not climax_line:
+            continue
+
+        frame_360 = idx_360.get(cx_event_id)
+        intensity = "Goal" if is_goal else pbp.classify_intensity(cx_event, frame_360)
+
+        if len(harvested) < CLIMAX_MIN_BUILDUP_ANCHORS:
+            direct_entry = {
+                "video_ts": cx_ts + REACTION_BUFFER_SECONDS,
+                "climax_ts": cx_ts,
+                "commentator": "pbp",
+                "text": climax_line,
+                "event_id": f"climax_direct::{cx_event_id}",
+                "selection_reason": "climax_direct",
+                "is_goal": is_goal,
+                "is_foul": False,
+                "intensity": intensity,
+                "event": cx_event,
+                "is_climax_direct": True,
+                "phase_event_ids": [],
+                "phase_lines": [climax_line],
+                "phase_line_items": [{"event_id": cx_event_id, "video_ts": cx_ts, "text": climax_line}],
+            }
+            phase_entries.append(direct_entry)
+            subsumed_ids.add(cx_event_id)
+            print(
+                f"  [DIRECT CLIMAX] Climax @ {cx_ts:.1f}s | "
+                f"only {len(harvested)} buildup anchors available."
+            )
+            continue
+
+        commentary_lines = []
+        phase_line_items = []
+        phase_event_ids = set()
+        t_start = harvested[0][0]
+
+        for a_ts, anchor_idx, anchor_event in harvested:
+            reason = "climax_phase_buildup"
+            a_id = anchor_event.get("id")
+            phase_event_ids.add(a_id)
+            line = _generate_phase_anchor_line(
+                events, idx_360, anchor_idx, anchor_event, reason, llm_available
+            )
+            if line:
+                commentary_lines.append(line)
+                phase_line_items.append({"event_id": a_id, "video_ts": a_ts, "text": line})
 
         if not commentary_lines:
             continue
 
+        commentary_lines.append(climax_line)
+        phase_line_items.append({"event_id": cx_event_id, "video_ts": cx_ts, "text": climax_line})
         stitched_text = stitch_pbp_lines(commentary_lines)
-        frame_360 = idx_360.get(cx_event_id)
-        intensity = "Goal" if is_goal else pbp.classify_intensity(cx_event, frame_360)
 
         phase_entry = {
             "video_ts": t_start,
             "climax_ts": cx_ts,
+            "time_budget": max(0.0, cx_ts - t_start),
             "commentator": "pbp",
             "text": stitched_text,
             "event_id": f"climax_phase::{cx_event_id}",
@@ -421,6 +483,7 @@ def build_climax_phase_timeline(events, threesixty_lookup, base_ts, climax_event
             "is_climax_phase": True,
             "phase_event_ids": list(phase_event_ids),
             "phase_lines": commentary_lines,
+            "phase_line_items": phase_line_items,
         }
         phase_entries.append(phase_entry)
         subsumed_ids.update(phase_event_ids)
@@ -457,20 +520,7 @@ def back_align_climax_entries(timeline):
             f"start: {old_start:.1f}s -> {new_start:.1f}s"
         )
 
-    timeline.sort(key=lambda e: e["video_ts"])
-    for i in range(1, len(timeline)):
-        prev = timeline[i - 1]
-        curr = timeline[i]
-        if not prev.get("audio_path") or not curr.get("audio_path"):
-            continue
-        prev_end = prev["video_ts"] + prev.get("audio_duration", 0.0)
-        if curr["video_ts"] < prev_end + MIN_AUDIO_GAP_SECONDS:
-            if curr.get("is_climax_phase"):
-                print(f"  [COLLISION] Climax phase @ {curr['video_ts']:.1f}s wins over prev.")
-            else:
-                curr["video_ts"] = prev_end + MIN_AUDIO_GAP_SECONDS
-
-    return timeline
+    return resolve_audio_collisions(timeline)
 
 # ─────────────────────────────────────────────────────────────
 # PRIORITY ARBITRATION ENGINE
@@ -520,7 +570,6 @@ def build_tactical_timeline(
             event_id_to_event[eid] = ev
 
     entries = []
-    deferred_climax_zone_items = []
     spatial_count = 0
     last_spatial_ts = -TAC_SPATIAL_COOLDOWN_SECONDS
     clip_duration = tac.get_clip_duration_seconds(events)
@@ -548,8 +597,6 @@ def build_tactical_timeline(
             )
             if in_climax_zone:
                 print(f"  [TAC SKIP - CLIMAX ZONE] {target_id} @ {video_ts:.1f}s")
-                if reason.startswith("spatial_"):
-                    deferred_climax_zone_items.append(item)
                 continue
 
         # Spatial cooldown
@@ -580,12 +627,6 @@ def build_tactical_timeline(
             team_name=result.get("team"),
         )
         print(f"    Done ({len(commentary)} chars)")
-        if not pbp.commentary_uses_only_allowed_names(commentary, events):
-            commentary = tac.build_spatial_commentary_fallback(
-                level,
-                result.get("tactical_labels") or {},
-                team_name=result.get("team"),
-            )
 
         if is_spatial and not is_high_value_setpiece:
             spatial_count += 1
@@ -601,45 +642,6 @@ def build_tactical_timeline(
             "is_foul": result.get("is_foul", False),
             "event": event,
         })
-
-    if not entries and deferred_climax_zone_items:
-        item = deferred_climax_zone_items[0]
-        target_id = item["event_id"]
-        event = event_id_to_event.get(target_id)
-        if event is not None:
-            video_ts = event_video_seconds(event, base_ts)
-            reason = item.get("selection_reason", "spatial_midfield_dense_frame")
-            print(f"  [TAC FORCE - SHORT CLIP] {target_id} @ {video_ts:.1f}s")
-            result = tac.process_event(
-                event,
-                events,
-                threesixty_lookup,
-                selection_reason=reason,
-                source_event_id=item.get("source_event_id"),
-            )
-            commentary = tac.generate_commentary_ollama(
-                result["tactical_description"],
-                level,
-                selection_reason=result.get("selection_reason", "auto"),
-                tactical_labels=result.get("tactical_labels"),
-                team_name=result.get("team"),
-            )
-            if not pbp.commentary_uses_only_allowed_names(commentary, events):
-                commentary = tac.build_spatial_commentary_fallback(
-                    level,
-                    result.get("tactical_labels") or {},
-                    team_name=result.get("team"),
-                )
-            entries.append({
-                "video_ts": video_ts,
-                "commentator": "tactical",
-                "text": commentary,
-                "event_id": target_id,
-                "selection_reason": reason,
-                "is_goal": result.get("is_goal", False),
-                "is_foul": result.get("is_foul", False),
-                "event": event,
-            })
 
     print(f"  Tactical pipeline produced {len(entries)} entries.")
     return entries
@@ -689,21 +691,10 @@ def build_pbp_timeline(events, threesixty_lookup, base_ts, subsumed_ids=None):
             flattened = pbp.build_flattened_stream(context_events, anchor_event, a, idx_360)
             prompt = pbp.build_prompt(flattened, intensity, anchor_event)
             commentary = pbp.generate_commentary(prompt)
-            commentary = pbp.ensure_allowed_commentary_names(
-                commentary,
-                events,
-                anchor_idx,
-                {"reason": reason},
-            )
         else:
             commentary = pbp.generate_template_commentary(events, anchor_idx, {"reason": reason})
-            commentary = pbp.ensure_allowed_commentary_names(
-                commentary,
-                events,
-                anchor_idx,
-                {"reason": reason},
-            )
 
+        commentary = pbp.enforce_surname_only(commentary, events).strip()
         if not commentary:
             continue
 
@@ -724,6 +715,172 @@ def build_pbp_timeline(events, threesixty_lookup, base_ts, subsumed_ids=None):
 
     print(f"  PBP pipeline produced {len(entries)} entries.")
     return entries
+
+
+def _gap_fill_candidate_score(event):
+    etype = tac.get_event_type(event)
+    if not tac.get_event_id(event):
+        return -100
+
+    player = pbp.get_player_last_name(event)
+    has_player = player and player not in {"Unknown", "Unknown Player", "Player"}
+    score_by_type = {
+        "Pass": 90,
+        "Carry": 85,
+        "Dribble": 82,
+        "Interception": 80,
+        "Ball Recovery": 78,
+        "Goal Keeper": 74,
+        "Duel": 70,
+        "Miscontrol": 66,
+        "Dispossessed": 64,
+        "Ball Out": 58,
+    }
+    score = score_by_type.get(etype, 50 if "free-kick" in str(etype).lower() else 35)
+    if has_player:
+        score += 8
+    if tac.get_event_location(event) is not None:
+        score += 2
+    return score
+
+
+def _build_gap_fill_commentary(events, event_idx):
+    event = events[event_idx]
+    etype = tac.get_event_type(event)
+    player = pbp.get_player_last_name(event)
+    team = pbp.get_team_name(event)
+    player_label = player if player and player not in {"Unknown", "Unknown Player"} else None
+    team_label = team if team and team != "Unknown Team" else "the side in possession"
+
+    if etype == "Duel":
+        return f"{player_label} contests it." if player_label else "A challenge comes in."
+    if etype == "Miscontrol":
+        return f"{player_label} cannot quite bring it under control." if player_label else "The touch gets away."
+    if etype == "Dispossessed":
+        return f"{player_label} is crowded off it." if player_label else "Possession is disrupted."
+    if etype == "Ball Out":
+        return "The ball runs out of play."
+    if "free-kick" in str(etype).lower():
+        return f"{team_label} restart and look to build again."
+
+    return pbp.generate_template_commentary(events, event_idx, {"reason": "Continuity Gap Fill"})
+
+
+def _choose_gap_fill_event(events, base_ts, start_ts, end_ts, target_ts, used_ids):
+    best = None
+    for idx, event in enumerate(events):
+        event_id = tac.get_event_id(event)
+        if not event_id or event_id in used_ids:
+            continue
+        ts = event_video_seconds(event, base_ts)
+        if ts < start_ts or ts > end_ts:
+            continue
+        score = _gap_fill_candidate_score(event) - abs(ts - target_ts) * 3.0
+        if best is None or score > best[0]:
+            best = (score, idx, event, ts)
+    return best
+
+
+def add_continuity_gap_fillers(timeline, events, threesixty_lookup, base_ts):
+    """
+    Add factual PBP continuity lines when the planned timeline has dead air.
+
+    This pass happens after tactical/PBP arbitration, so it respects the current
+    plan and only fills long empty stretches with real events from StatsBomb.
+    Final duration-aware collision checks still run after TTS.
+    """
+    del threesixty_lookup
+    if not events:
+        return timeline
+
+    timeline = sorted(timeline, key=lambda e: e["video_ts"])
+    used_ids = {entry.get("event_id") for entry in timeline if entry.get("event_id")}
+    fillers = []
+
+    if not timeline:
+        event_start = 0.0
+        event_end = max(event_video_seconds(event, base_ts) for event in events)
+        cursor_ts = event_start
+        while event_end - cursor_ts > MAX_PLANNED_SILENCE_SECONDS:
+            target_ts = cursor_ts + GAP_FILL_TARGET_SECONDS
+            chosen = _choose_gap_fill_event(
+                events,
+                base_ts,
+                cursor_ts + GAP_FILL_EDGE_BUFFER_SECONDS,
+                min(event_end, target_ts + 3.0),
+                target_ts,
+                used_ids,
+            )
+            if not chosen:
+                break
+            _, event_idx, event, event_ts = chosen
+            event_id = tac.get_event_id(event)
+            text = pbp.enforce_surname_only(_build_gap_fill_commentary(events, event_idx), events).strip()
+            if not text:
+                break
+            fillers.append({
+                "video_ts": event_ts,
+                "commentator": "pbp",
+                "text": text,
+                "event_id": event_id,
+                "selection_reason": "continuity_gap_fill",
+                "is_goal": pbp.is_goal_event(event),
+                "is_foul": tac.is_foul_event(event),
+                "intensity": "Neutral",
+                "event": event,
+                "is_gap_filler": True,
+            })
+            used_ids.add(event_id)
+            cursor_ts = event_ts
+        return sorted(fillers, key=lambda e: e["video_ts"])
+
+    for prev, nxt in zip(timeline, timeline[1:]):
+        cursor_ts = prev["video_ts"]
+        next_ts = nxt["video_ts"]
+        while next_ts - cursor_ts > MAX_PLANNED_SILENCE_SECONDS:
+            target_ts = cursor_ts + GAP_FILL_TARGET_SECONDS
+            window_start = cursor_ts + GAP_FILL_EDGE_BUFFER_SECONDS
+            window_end = min(next_ts - GAP_FILL_EDGE_BUFFER_SECONDS, target_ts + 3.0)
+            if window_end <= window_start:
+                break
+
+            chosen = _choose_gap_fill_event(
+                events, base_ts, window_start, window_end, target_ts, used_ids
+            )
+            if not chosen:
+                break
+
+            _, event_idx, event, event_ts = chosen
+            event_id = tac.get_event_id(event)
+            text = pbp.enforce_surname_only(_build_gap_fill_commentary(events, event_idx), events).strip()
+            if not text:
+                break
+
+            filler = {
+                "video_ts": event_ts,
+                "commentator": "pbp",
+                "text": text,
+                "event_id": event_id,
+                "selection_reason": "continuity_gap_fill",
+                "is_goal": pbp.is_goal_event(event),
+                "is_foul": tac.is_foul_event(event),
+                "intensity": "Neutral",
+                "event": event,
+                "is_gap_filler": True,
+            }
+            fillers.append(filler)
+            used_ids.add(event_id)
+            cursor_ts = event_ts
+            print(
+                f"  [GAP FILL] Added PBP at {event_ts:.1f}s between "
+                f"{prev['video_ts']:.1f}s and {next_ts:.1f}s: {text}"
+            )
+
+    if fillers:
+        timeline.extend(fillers)
+        timeline.sort(key=lambda e: e["video_ts"])
+        print(f"  Added {len(fillers)} continuity PBP line(s) to reduce silence.")
+    return timeline
 
 
 def merge_timelines(tac_entries, pbp_entries):
@@ -778,8 +935,6 @@ def merge_timelines(tac_entries, pbp_entries):
     for entry in pbp_entries:
         ts = entry["video_ts"]
         excluded = any(start <= ts <= end for start, end in pbp_exclude_ranges)
-        if excluded and (entry.get("is_climax_phase") or entry.get("is_goal") or entry.get("is_foul")):
-            excluded = False
         if excluded:
             print(f"  [PBP EXCLUDED] {entry['event_id']} at {ts:.1f}s — "
                   f"within tactical exclusion zone")
@@ -796,12 +951,6 @@ def merge_timelines(tac_entries, pbp_entries):
                   f"PBP has priority (penalty area)")
             continue
         filtered_tac.append(entry)
-
-    if not filtered_tac and tac_entries:
-        forced = dict(tac_entries[0])
-        forced["video_ts"] = max(0.0, forced["video_ts"] - 1.5)
-        print(f"  [TAC FORCE - MERGE] Keeping tactical entry {forced['event_id']} for coverage")
-        filtered_tac.append(forced)
 
     # ── Step 6: Combine and sort by timestamp ──
     combined = filtered_tac + filtered_pbp
@@ -845,7 +994,7 @@ def merge_timelines(tac_entries, pbp_entries):
 # TEXT-TO-SPEECH
 # ─────────────────────────────────────────────────────────────
 
-def generate_tts_audio(timeline, progress_callback=None):
+def generate_tts_audio(timeline, progress_callback=None, events=None, threesixty_lookup=None, base_ts=0.0):
     """
     Generate WAV files for each commentary entry using Qwen3-TTS voice cloning.
     Uses Qwen/Qwen3-TTS-12Hz-0.6B-Base for voice cloning from reference audio samples.
@@ -856,13 +1005,7 @@ def generate_tts_audio(timeline, progress_callback=None):
     import wave
     import torch
     import soundfile as sf
-    configure_external_audio_tools()
-    import contextlib
-    import io
-
-    # qwen_tts prints a flash-attn advisory on Windows; CUDA still runs with PyTorch SDPA.
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-        from qwen_tts import Qwen3TTSModel
+    from qwen_tts import Qwen3TTSModel
 
     # Reference text transcripts for each voice sample (needed for high-quality cloning)
     REF_TEXTS = {
@@ -938,6 +1081,205 @@ def generate_tts_audio(timeline, progress_callback=None):
 
     print(f"  Built {len(voice_prompts)} voice clone prompts.")
 
+    def render_text_to_wav(text, ref_filename, wav_path):
+        wavs, sr = model.generate_voice_clone(
+            text=text,
+            language="English",
+            voice_clone_prompt=voice_prompts[ref_filename],
+        )
+        sf.write(wav_path, wavs[0], sr)
+        if not os.path.exists(wav_path):
+            return None, 0.0
+        return wav_path, get_wav_duration(wav_path)
+
+    def fit_climax_phase_audio(entry, ref_filename, base_wav_path):
+        lines = list(entry.get("phase_lines") or [entry["text"]])
+        items = list(entry.get("phase_line_items") or [])
+        if not lines:
+            lines = [entry["text"]]
+
+        attempt = 0
+        while True:
+            text = stitch_pbp_lines(lines) if len(lines) > 1 else lines[0].strip()
+            entry["text"] = text
+            wav_path = base_wav_path.replace(".wav", f"_fit{attempt}.wav")
+            audio_path, duration = render_text_to_wav(text, ref_filename, wav_path)
+            if not audio_path:
+                return None, 0.0
+
+            if not entry.get("is_climax_phase"):
+                return audio_path, duration
+
+            climax_ts = entry.get("climax_ts", entry.get("video_ts", 0.0))
+            budget = max(0.0, climax_ts - entry.get("video_ts", climax_ts))
+            entry["time_budget"] = budget
+
+            if budget <= 0.05 or duration <= budget:
+                return audio_path, duration
+
+            required_ratio = duration / budget
+            if required_ratio <= MAX_SPEEDUP_RATIO:
+                stretched_path = apply_time_stretch(audio_path, required_ratio, TEMP_DIR)
+                stretched_duration = get_wav_duration(stretched_path)
+                if stretched_duration and stretched_duration <= budget + 0.05:
+                    print(
+                        f"      [BUDGET] sped up climax phase "
+                        f"{required_ratio:.2f}x to fit {budget:.1f}s"
+                    )
+                    return stretched_path, stretched_duration
+
+            if len(lines) > 1:
+                dropped = lines.pop(0)
+                if items:
+                    items.pop(0)
+                if len(lines) == 1:
+                    entry["is_climax_phase"] = False
+                    entry["is_climax_direct"] = True
+                    entry["selection_reason"] = "climax_direct_budget_fallback"
+                    entry["video_ts"] = climax_ts + REACTION_BUFFER_SECONDS
+                    entry["time_budget"] = 0.0
+                    print(
+                        "      [BUDGET] dropped buildup and switched to direct "
+                        f"climax call: '{dropped[:40]}...'"
+                    )
+                elif items:
+                    entry["video_ts"] = items[0].get("video_ts", entry["video_ts"])
+                    entry["time_budget"] = max(0.0, climax_ts - entry["video_ts"])
+                    print(f"      [BUDGET] dropped first buildup line: '{dropped[:40]}...'")
+                attempt += 1
+                continue
+
+            entry["is_climax_phase"] = False
+            entry["is_climax_direct"] = True
+            entry["selection_reason"] = "climax_direct_budget_fallback"
+            entry["video_ts"] = entry.get("climax_ts", entry["video_ts"]) + REACTION_BUFFER_SECONDS
+            entry["time_budget"] = 0.0
+            return audio_path, duration
+
+    def render_gap_filler_entry(event_idx, event, event_ts, filler_number, used_ids):
+        event_id = tac.get_event_id(event)
+        if not event_id or event_id in used_ids:
+            return None
+
+        text = pbp.enforce_surname_only(_build_gap_fill_commentary(events, event_idx), events).strip()
+        if not text:
+            return None
+
+        wav_path = os.path.join(TEMP_DIR, f"tts_gap_{filler_number:03d}_pbp.wav")
+        audio_path, duration = render_text_to_wav(text, "Neutral.mp3", wav_path)
+        if not audio_path or duration <= 0.0:
+            return None
+
+        return {
+            "video_ts": event_ts,
+            "commentator": "pbp",
+            "text": text,
+            "event_id": event_id,
+            "selection_reason": "post_tts_continuity_gap_fill",
+            "is_goal": pbp.is_goal_event(event),
+            "is_foul": tac.is_foul_event(event),
+            "intensity": "Neutral",
+            "event": event,
+            "is_gap_filler": True,
+            "audio_path": audio_path,
+            "audio_duration": duration,
+        }
+
+    def add_post_tts_gap_fillers(current_timeline):
+        """
+        Fill real silence after WAV durations are known.
+
+        Candidate fillers are always PBP and are only committed if their measured
+        audio can fit between confirmed commentary clips without overlap.
+        """
+        if not events or "Neutral.mp3" not in voice_prompts:
+            return current_timeline
+
+        resolved = resolve_audio_collisions(current_timeline)
+        active = [
+            entry for entry in resolved
+            if entry.get("audio_path") and entry.get("audio_duration", 0.0) > 0.0
+        ]
+        active.sort(key=lambda e: e["video_ts"])
+
+        used_ids = {entry.get("event_id") for entry in resolved if entry.get("event_id")}
+        fillers = []
+        filler_number = 0
+        event_end = max(event_video_seconds(event, base_ts) for event in events)
+        boundaries = [{
+            "video_ts": 0.0,
+            "audio_duration": 0.0,
+            "audio_path": "__virtual_start__",
+            "event_id": "__virtual_start__",
+        }]
+        boundaries.extend(active)
+        boundaries.append({
+            "video_ts": event_end,
+            "audio_duration": 0.0,
+            "audio_path": "__virtual_end__",
+            "event_id": "__virtual_end__",
+        })
+        boundaries.sort(key=lambda e: e["video_ts"])
+
+        def try_fill_between(prev_end, next_start):
+            nonlocal filler_number
+            cursor_end = prev_end
+            while next_start - cursor_end > MAX_SILENCE_SECONDS:
+                earliest_start = cursor_end + MIN_AUDIO_GAP_SECONDS
+                latest_event_ts = next_start - MIN_AUDIO_GAP_SECONDS
+                if latest_event_ts <= earliest_start:
+                    break
+
+                target_ts = min(cursor_end + GAP_FILL_TARGET_SECONDS, latest_event_ts)
+                chosen = _choose_gap_fill_event(
+                    events,
+                    base_ts,
+                    earliest_start,
+                    latest_event_ts,
+                    target_ts,
+                    used_ids,
+                )
+                if not chosen:
+                    break
+
+                _, event_idx, event, event_ts = chosen
+                filler = render_gap_filler_entry(event_idx, event, event_ts, filler_number, used_ids)
+                filler_number += 1
+                if not filler:
+                    used_ids.add(tac.get_event_id(event))
+                    break
+
+                earliest_audio_start = cursor_end + MIN_AUDIO_GAP_SECONDS
+                latest_audio_start = next_start - filler["audio_duration"] - MIN_AUDIO_GAP_SECONDS
+                if latest_audio_start < earliest_audio_start:
+                    print(
+                        f"  [POST-TTS GAP] Skipped filler at {event_ts:.1f}s; "
+                        f"{filler['audio_duration']:.1f}s cannot fit in {next_start - cursor_end:.1f}s gap."
+                    )
+                    used_ids.add(filler["event_id"])
+                    break
+
+                filler["video_ts"] = min(max(event_ts, earliest_audio_start), latest_audio_start)
+                fillers.append(filler)
+                used_ids.add(filler["event_id"])
+                cursor_end = filler["video_ts"] + filler["audio_duration"]
+                print(
+                    f"  [POST-TTS GAP] Added PBP at {filler['video_ts']:.1f}s "
+                    f"({filler['audio_duration']:.1f}s) inside {prev_end:.1f}s-{next_start:.1f}s: "
+                    f"{filler['text']}"
+                )
+
+        for prev, nxt in zip(boundaries, boundaries[1:]):
+            prev_end = prev["video_ts"] + prev.get("audio_duration", 0.0)
+            next_start = nxt["video_ts"]
+            try_fill_between(prev_end, next_start)
+
+        if fillers:
+            resolved.extend(fillers)
+            resolved = resolve_audio_collisions(resolved)
+            print(f"  Added {len(fillers)} post-TTS continuity PBP line(s).")
+        return resolved
+
     total = len(timeline)
     for i, entry in enumerate(timeline):
         if progress_callback:
@@ -976,24 +1318,15 @@ def generate_tts_audio(timeline, progress_callback=None):
 
         try:
             print(f"  [{i+1}/{total}] {entry['commentator'].upper():9s} - Voice: {ref_filename}")
-            wavs, sr = model.generate_voice_clone(
-                text=text,
-                language="English",
-                voice_clone_prompt=voice_prompts[ref_filename],
-            )
+            if entry.get("is_climax_phase"):
+                audio_path, duration = fit_climax_phase_audio(entry, ref_filename, wav_path)
+            else:
+                audio_path, duration = render_text_to_wav(text, ref_filename, wav_path)
 
-            # Save the generated audio
-            sf.write(wav_path, wavs[0], sr)
-
-            # Get duration using the wave module
-            if os.path.exists(wav_path):
-                with wave.open(wav_path, "rb") as wf:
-                    frames = wf.getnframes()
-                    rate = wf.getframerate()
-                    duration = frames / float(rate) if rate > 0 else 0.0
-                entry["audio_path"] = wav_path
+            if audio_path:
+                entry["audio_path"] = audio_path
                 entry["audio_duration"] = duration
-                print(f"      @ {entry['video_ts']:6.1f}s | {duration:.1f}s | {text[:60]}...")
+                print(f"      @ {entry['video_ts']:6.1f}s | {duration:.1f}s | {entry['text'][:60]}...")
             else:
                 entry["audio_path"] = None
                 entry["audio_duration"] = 0.0
@@ -1002,19 +1335,13 @@ def generate_tts_audio(timeline, progress_callback=None):
             entry["audio_path"] = None
             entry["audio_duration"] = 0.0
 
+    timeline = back_align_climax_entries(timeline)
+    timeline = add_post_tts_gap_fillers(timeline)
+
     # Free GPU memory after TTS generation is complete
     del model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-
-    # Fix overlaps: if one commentary would overlap the next, shift the next
-    for i in range(1, len(timeline)):
-        prev = timeline[i - 1]
-        curr = timeline[i]
-        if prev.get("audio_path") and curr.get("audio_path"):
-            prev_end = prev["video_ts"] + prev["audio_duration"]
-            if curr["video_ts"] < prev_end + 0.3:
-                curr["video_ts"] = prev_end + 0.3
 
     return timeline
 
@@ -1031,15 +1358,14 @@ def compose_video_with_commentary(timeline, progress_callback=None):
     print("\n=== Composing Final Video ===")
     if progress_callback:
         progress_callback("Composing video with commentary...")
+    timeline = resolve_audio_collisions(timeline)
 
-    _, ffmpeg_path = configure_external_audio_tools()
     from moviepy import VideoFileClip, AudioFileClip
     from pydub import AudioSegment
     import imageio_ffmpeg
     # Point pydub to the ffmpeg bundled with imageio_ffmpeg
-    ffmpeg_path = ffmpeg_path or imageio_ffmpeg.get_ffmpeg_exe()
-    AudioSegment.converter = ffmpeg_path
-    AudioSegment.ffprobe = ffmpeg_path
+    AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()
+    AudioSegment.ffprobe = imageio_ffmpeg.get_ffmpeg_exe()
 
     video = VideoFileClip(VIDEO_FILE)
     video_duration = video.duration
@@ -1056,8 +1382,11 @@ def compose_video_with_commentary(timeline, progress_callback=None):
 
     # Build the commentary overlay track
     commentary_track = AudioSegment.silent(duration=len(crowd_audio))
+    last_commentary_end_ms = -int(MIN_AUDIO_GAP_SECONDS * 1000)
 
     for entry in timeline:
+        if entry.get("drop_audio"):
+            continue
         audio_path = entry.get("audio_path")
         if not audio_path or not os.path.exists(audio_path):
             continue
@@ -1070,9 +1399,19 @@ def compose_video_with_commentary(timeline, progress_callback=None):
 
         try:
             tts_audio = AudioSegment.from_wav(audio_path)
+            min_start_ms = last_commentary_end_ms + int(MIN_AUDIO_GAP_SECONDS * 1000)
+            if position_ms < min_start_ms:
+                print(
+                    f"  [FINAL AUDIO GUARD] Moving overlay "
+                    f"{position_ms / 1000:.1f}s -> {min_start_ms / 1000:.1f}s"
+                )
+                position_ms = min_start_ms
+            if position_ms >= len(commentary_track):
+                continue
             # Boost commentary volume slightly
             tts_audio = tts_audio + 3  # +3 dB
             commentary_track = commentary_track.overlay(tts_audio, position=position_ms)
+            last_commentary_end_ms = position_ms + len(tts_audio)
         except Exception as e:
             print(f"  Error overlaying audio at {position_ms}ms: {e}")
 
@@ -1240,14 +1579,17 @@ def run_pipeline(level, progress_callback=None, done_callback=None):
         # ── Generate TTS audio ──
         if progress_callback:
             progress_callback("Generating voice audio...")
-        timeline = generate_tts_audio(timeline, progress_callback)
+        timeline = generate_tts_audio(
+            timeline,
+            progress_callback,
+            events=events,
+            threesixty_lookup=threesixty_lookup,
+            base_ts=base_ts,
+        )
 
         # ── Compose final video ──
         if progress_callback:
             progress_callback("Building final video (this may take a moment)...")
-        # -- Back-align climax audio
-        timeline = back_align_climax_entries(timeline)
-
         output_path = compose_video_with_commentary(timeline, progress_callback)
 
         if done_callback:

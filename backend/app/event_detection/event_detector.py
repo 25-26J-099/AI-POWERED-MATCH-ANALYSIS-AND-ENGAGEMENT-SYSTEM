@@ -20,11 +20,26 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 
+_EVENT_TYPE_ALIASES = {
+    "indirect free-kick": "pass",
+    "indirect-free-kick": "pass",
+    "indirect free kick": "pass",
+    "indirect_free_kick": "pass",
+}
+
+
+def normalize_event_type(event_type: object) -> str:
+    """Normalize detector labels to the internal event vocabulary."""
+    normalized = str(event_type or "unknown").strip().lower()
+    return _EVENT_TYPE_ALIASES.get(normalized, normalized)
+
+
 class EventType(Enum):
     # Existing events
     POSSESSION_CHANGE = "possession_change"
     PASS_ATTEMPT = "pass"
     SHOT = "shot"
+    GOAL = "goal"
     TACKLE = "tackle"
     OUT_OF_BOUNDS = "out_of_bounds"
     SPRINT = "sprint"
@@ -67,9 +82,12 @@ class GameEvent:
     source: str = "rule"
     freeze_frame: Optional[dict] = None  # v4: Added freeze frame support
 
+    def __post_init__(self) -> None:
+        self.event_type = normalize_event_type(self.event_type)
+
     def to_dict(self) -> dict:
         result = {
-            "type": self.event_type,
+            "type": normalize_event_type(self.event_type),
             "frame": int(self.frame_idx),
             "timestamp": round(_f(self.timestamp), 2),
             "confidence": round(_f(self.confidence), 3),
@@ -92,6 +110,7 @@ class GameEvent:
 EVENT_COOLDOWNS = {
     "out_of_bounds": 100,
     "shot": 60,
+    "goal": 60,
     "tackle": 50,
     "possession_change": 25,
     "pass": 25,

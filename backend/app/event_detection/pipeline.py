@@ -21,6 +21,7 @@ from app.event_detection.tracker import PlayerBallTracker
 from app.event_detection.team_assigner import TeamAssigner
 from app.event_detection.jersey_ocr import JerseyOCR
 from app.event_detection.player_reid import PlayerReIDModule
+from app.event_detection.event_detector import GameEvent, normalize_event_type
 from app.event_detection.strategic_hybrid_detector import StrategicHybridEventDetector
 from app.event_detection.statsbomb_export import StatsBombExporter
 from app.services.model_loader import download_hf_asset
@@ -182,6 +183,43 @@ class MatchAnalysisPipeline:
             event_payload["team_name"] = team_name
         return event_payload
 
+    def _build_direct_ml_event(self, ml_event: Dict, player_tracks, ball_track) -> GameEvent:
+        """Convert CNN event payloads into normal GameEvent objects for export."""
+        event_type = normalize_event_type(ml_event.get("type") or "unknown")
+        frame_idx = int(ml_event.get("frame") or 0)
+        timestamp = float(ml_event.get("timestamp") or 0.0)
+        confidence = float(ml_event.get("confidence") or 0.0)
+
+        possessor = self.event_detector.rule.possession_player
+        player_id = possessor if possessor in player_tracks else None
+        team_id = self.event_detector.rule.possession_team
+        position = (0.0, 0.0)
+
+        if ball_track is not None and ball_track.frames_lost < 5:
+            position = (_pf(ball_track.center[0]), _pf(ball_track.center[1]))
+        elif player_id is not None:
+            track = player_tracks[player_id]
+            position = (_pf(track.center[0]), _pf(track.center[1]))
+            team_id = getattr(track, "team_id", team_id)
+
+        event = GameEvent(
+            event_type=event_type,
+            frame_idx=frame_idx,
+            timestamp=timestamp,
+            confidence=confidence,
+            position=position,
+            player_id=player_id,
+            team_id=team_id if team_id is not None else -1,
+            details=f"ML classification: {ml_event.get('class', event_type)}",
+            source="ml",
+        )
+
+        if not event.freeze_frame:
+            event.freeze_frame = self.event_detector.freeze_frame_gen.generate(
+                event, player_tracks, ball_track
+            )
+        return event
+
     def _assign_teams_continuous(self, frame, tracks, frame_idx: int = 0):
         """Assign/reassign teams every 5 frames (teams don't change frame-to-frame)."""
         if not self._team_fitted:
@@ -257,6 +295,12 @@ class MatchAnalysisPipeline:
         )
         logger.info("-" * 60)
 
+        completed_naturally = False
+        last_frame = None
+        last_player_tracks = {}
+        last_ball_track = None
+        last_frame_idx = 0
+
         try:
             for frame_idx, frame in reader.read_frames():
                 t0 = time.time()
@@ -270,7 +314,7 @@ class MatchAnalysisPipeline:
                 # Team fitting (first ~30 frames)
                 self._collect_and_fit_teams(frame, player_tracks)
 
-                # Continuous team assignment (every 5 frames — see method for rationale)
+                # Continuous team assignment (EVERY frame, not cached)
                 self._assign_teams_continuous(frame, player_tracks, frame_idx)
 
                 # Module 2.25: Jersey OCR on tracked player crops
@@ -287,6 +331,7 @@ class MatchAnalysisPipeline:
                     )
                 
                 # v4: Module 3.5: ML Event Detection (if enabled)
+                ml_frame_events = []
                 if self._ml_enabled and self.ml_detector:
                     # Update ML detector with current frame
                     self.ml_detector.update_buffer(frame)
@@ -299,21 +344,17 @@ class MatchAnalysisPipeline:
                         )
                         # ML events are added to event detector's event list
                         for ml_event in ml_events:
-                            # Convert to GameEvent format
-                            from app.event_detection.event_detector import GameEvent
-                            event = GameEvent(
-                                event_type=ml_event['type'],
-                                frame_idx=ml_event['frame'],
-                                timestamp=ml_event['timestamp'],
-                                confidence=ml_event['confidence'],
-                                source='ml'
+                            event = self._build_direct_ml_event(
+                                ml_event, player_tracks, ball_track
                             )
                             self.event_detector.events.append(event)
+                            ml_frame_events.append(event)
 
                 # Module 4: Event Detection (rule-based + ML hybrid)
-                events = self.event_detector.process_frame(
+                rule_events = self.event_detector.process_frame(
                     processed, player_tracks, ball_track, frame_idx, self.fps
                 )
+                events = [*ml_frame_events, *rule_events]
 
                 # ── Data export ────────────────────────────────────
                 for tid, track in player_tracks.items():
@@ -383,6 +424,10 @@ class MatchAnalysisPipeline:
                 writer.write(annotated)
                 self.frame_count += 1
                 total_proc += time.time() - t0
+                last_frame = frame
+                last_player_tracks = player_tracks
+                last_ball_track = ball_track
+                last_frame_idx = frame_idx
 
                 if frame_idx % 100 == 0 and frame_idx > 0:
                     avg_fps = self.frame_count / total_proc
@@ -392,12 +437,39 @@ class MatchAnalysisPipeline:
                         f"{avg_fps:.1f} FPS | Players: {len(player_tracks)} | "
                         f"Events: {len(self.event_detector.events)}"
                     )
+            completed_naturally = True
 
         except KeyboardInterrupt:
             logger.warning("Interrupted by user")
         finally:
             writer.release()
             reader.release()
+
+        if (
+            completed_naturally
+            and self._ml_enabled
+            and self.hybrid_event_system
+            and last_frame is not None
+        ):
+            ball_pos = (
+                last_ball_track.center
+                if last_ball_track and last_ball_track.frames_lost < 5
+                else None
+            )
+            final_ml_events = self.hybrid_event_system.detect_events(
+                last_frame,
+                ball_pos,
+                last_player_tracks,
+                last_frame_idx,
+                self.fps,
+                force=True,
+            )
+            for ml_event in final_ml_events:
+                event = self._build_direct_ml_event(
+                    ml_event, last_player_tracks, last_ball_track
+                )
+                self.event_detector.events.append(event)
+                self.exporter.add_event(self._enrich_event_team(event.to_dict()))
 
         elapsed = time.time() - start_time
         avg_fps = self.frame_count / total_proc if total_proc > 0 else 0

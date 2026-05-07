@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { uploadVideo } from '../api/client';
+import { uploadVideo, validateFootballVideo } from '../api/client';
 
 const COMMENTARY_LEVELS = ['Auto', 'Beginner', 'Intermediate', 'Expert'] as const;
 const COMMENTARY_VERBOSITY = ['low', 'medium', 'high'] as const;
@@ -17,19 +17,64 @@ export default function Upload() {
     const [educationalMode, setEducationalMode] = useState(false);
     const [progress, setProgress] = useState(0);
     const [uploading, setUploading] = useState(false);
+    const [validatingFile, setValidatingFile] = useState(false);
+    const [pendingFileName, setPendingFileName] = useState('');
+    const [validationMessage, setValidationMessage] = useState('');
+    const [validationStatus, setValidationStatus] = useState('');
     const [error, setError] = useState('');
     const [dragOver, setDragOver] = useState(false);
+    const validationRun = useRef(0);
 
-    const handleFile = (candidate: File | null | undefined) => {
+    const handleFile = async (candidate: File | null | undefined) => {
         if (!candidate) {
             return;
         }
+        const runId = validationRun.current + 1;
+        validationRun.current = runId;
+        setFile(null);
+        setProgress(0);
+        setValidationMessage('');
+        setValidationStatus('');
+
         if (!candidate.type.startsWith('video/')) {
             setError('Please upload a video file.');
             return;
         }
-        setFile(candidate);
+
         setError('');
+        setPendingFileName(candidate.name);
+        setValidatingFile(true);
+        setValidationStatus('checking');
+        setValidationMessage('Checking whether this is football match footage...');
+
+        try {
+            const response = await validateFootballVideo(candidate);
+            if (validationRun.current !== runId) {
+                return;
+            }
+            const validation = response.data;
+            setValidationStatus(validation.status);
+            setValidationMessage(validation.message);
+            if (validation.is_valid) {
+                setFile(candidate);
+            } else {
+                setFile(null);
+                setError(validation.message);
+            }
+        } catch (err: any) {
+            if (validationRun.current !== runId) {
+                return;
+            }
+            const detail = err.response?.data?.detail || 'Could not validate this video. Please try another file.';
+            setFile(null);
+            setValidationStatus('invalid');
+            setValidationMessage(detail);
+            setError(detail);
+        } finally {
+            if (validationRun.current === runId) {
+                setValidatingFile(false);
+            }
+        }
     };
 
     const handleUpload = async () => {
@@ -57,7 +102,7 @@ export default function Upload() {
     return (
         <div className="page-container" style={{ maxWidth: '900px', margin: '0 auto', paddingTop: '48px' }}>
             <h1 className="page-title">Upload Match Video</h1>
-            <p className="page-subtitle">Upload once, then track the merged tracking and analytics pipeline in real time.</p>
+            <p className="page-subtitle">Upload once, validate match footage, then track the merged analytics pipeline in real time.</p>
 
             {error && (
                 <div
@@ -79,38 +124,81 @@ export default function Upload() {
                 onDrop={(e) => {
                     e.preventDefault();
                     setDragOver(false);
-                    handleFile(e.dataTransfer.files?.[0]);
+                    void handleFile(e.dataTransfer.files?.[0]);
                 }}
                 onDragOver={(e) => {
                     e.preventDefault();
                     setDragOver(true);
                 }}
                 onDragLeave={() => setDragOver(false)}
-                onClick={() => document.getElementById('video-input')?.click()}
+                onClick={() => {
+                    if (!uploading && !validatingFile) {
+                        const input = document.getElementById('video-input') as HTMLInputElement | null;
+                        if (input) {
+                            input.value = '';
+                            input.click();
+                        }
+                    }
+                }}
                 style={{
                     border: dragOver ? '2px dashed var(--accent)' : '2px dashed var(--border-subtle)',
                     textAlign: 'center',
                     padding: '72px 40px',
-                    cursor: 'pointer',
+                    cursor: uploading || validatingFile ? 'not-allowed' : 'pointer',
                     background: dragOver ? 'rgba(99,102,241,0.05)' : 'var(--bg-glass)',
                     transition: 'all 0.3s',
                 }}
             >
                 <div style={{ fontSize: '4rem', marginBottom: '16px' }}>🎬</div>
                 <h3 style={{ fontSize: '1.3rem', fontWeight: 600, marginBottom: '8px' }}>
-                    {file ? file.name : 'Drop your match video here'}
+                    {validatingFile ? pendingFileName : file ? file.name : 'Drop your match video here'}
                 </h3>
                 <p style={{ color: 'var(--text-secondary)' }}>
-                    {file ? `${(file.size / 1024 / 1024).toFixed(1)} MB ready to process` : 'or click to browse - MP4, AVI, MOV'}
+                    {validatingFile
+                        ? 'Checking football match content before upload...'
+                        : file
+                            ? `${(file.size / 1024 / 1024).toFixed(1)} MB ready to process`
+                            : 'or click to browse - MP4, AVI, MOV'}
                 </p>
                 <input
                     id="video-input"
                     type="file"
                     accept="video/*"
                     style={{ display: 'none' }}
-                    onChange={(e) => handleFile(e.target.files?.[0])}
+                    disabled={uploading || validatingFile}
+                    onChange={(e) => void handleFile(e.target.files?.[0])}
                 />
             </div>
+
+            {validationMessage && (
+                <div
+                    style={{
+                        background:
+                            validationStatus === 'invalid'
+                                ? 'rgba(239,68,68,0.1)'
+                                : validationStatus === 'checking'
+                                    ? 'rgba(59,130,246,0.1)'
+                                    : 'rgba(34,197,94,0.1)',
+                        border:
+                            validationStatus === 'invalid'
+                                ? '1px solid rgba(239,68,68,0.3)'
+                                : validationStatus === 'checking'
+                                    ? '1px solid rgba(59,130,246,0.3)'
+                                    : '1px solid rgba(34,197,94,0.3)',
+                        borderRadius: '12px',
+                        padding: '12px 16px',
+                        marginTop: '16px',
+                        color:
+                            validationStatus === 'invalid'
+                                ? '#ef4444'
+                                : validationStatus === 'checking'
+                                    ? '#60a5fa'
+                                    : '#22c55e',
+                    }}
+                >
+                    {validationMessage}
+                </div>
+            )}
 
             <div className="glass-card" style={{ marginTop: '24px' }}>
                 <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '10px' }}>Expert Commentary Level</h3>
@@ -235,17 +323,17 @@ export default function Upload() {
                                 />
                             </div>
                             <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '8px' }}>
-                                Uploading... {progress}%
+                                {progress >= 100 ? 'Validating football match content...' : `Uploading... ${progress}%`}
                             </p>
                         </div>
                     )}
                     <button
                         className="btn-primary"
                         onClick={handleUpload}
-                        disabled={uploading}
+                        disabled={uploading || validatingFile || !file}
                         style={{ width: '100%', padding: '16px' }}
                     >
-                        {uploading ? 'Uploading...' : `Upload and Start Analysis (${commentaryLevel}) ->`}
+                        {uploading ? 'Uploading and validating...' : `Upload and Start Analysis (${commentaryLevel}) ->`}
                     </button>
                 </div>
             )}

@@ -2,7 +2,7 @@
 # Base: CUDA 12.4.1 + cuDNN 9 on Ubuntu 22.04 (compatible with A100 GPU).
 # Single worker process shares the GPU across async handlers to avoid OOM.
 
-FROM nvidia/cuda:12.4.1-cudnn9-runtime-ubuntu22.04
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 # ── System dependencies ───────────────────────────────────────────────────────
 ENV DEBIAN_FRONTEND=noninteractive

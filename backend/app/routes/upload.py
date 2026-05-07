@@ -40,6 +40,38 @@ class TeamMappingRequest(BaseModel):
     team_names: dict[int, str] = Field(..., min_length=2)
 
 
+@router.post("/validate-football-video")
+async def validate_uploaded_football_video(video: UploadFile = File(...)):
+    """Preflight-check a selected video before creating a match upload."""
+    if video.content_type and not video.content_type.startswith("video/"):
+        return {
+            "is_valid": False,
+            "status": "invalid",
+            "confidence": 0.0,
+            "message": "Please upload a video file.",
+            "sampled_frames": 0,
+            "positive_frame_ratio": 0.0,
+            "evidence": {},
+            "frame_scores": [],
+        }
+
+    filename = video.filename or "validation_video.mp4"
+    ext = Path(filename).suffix or ".mp4"
+    validation_dir = Path(settings.UPLOAD_DIR) / "validation"
+    validation_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = validation_dir / f"{uuid.uuid4().hex}{ext}"
+
+    try:
+        with temp_path.open("wb") as outfile:
+            while chunk := await video.read(1024 * 1024):
+                outfile.write(chunk)
+        validation = await asyncio.to_thread(validate_football_video, temp_path)
+        return validation.to_dict()
+    finally:
+        await video.close()
+        temp_path.unlink(missing_ok=True)
+
+
 @router.post("/upload-video")
 async def upload_video(
     video: UploadFile = File(...),

@@ -17,6 +17,7 @@ import logging
 
 # Import the user's model architecture
 from app.models.event_detection_model import EventDetectionModel
+from app.event_detection.event_detector import normalize_event_type
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +149,7 @@ class MLEventDetector:
         """Map model labels to internal events without collapsing goals into shots."""
         if pred_class == "Goal":
             return "goal"
-        return event_mapping.get(pred_class, pred_class.lower())
+        return normalize_event_type(event_mapping.get(pred_class, pred_class.lower()))
 
     def predict(self, force: bool = False):
         """
@@ -253,7 +254,7 @@ class HybridEventSystem:
         ml_pred = self.ml_detector.predict(force=force)
         
         if ml_pred and ml_pred['confidence'] > self.ml_confidence_threshold:
-            event_type = ml_pred['mapped_event']
+            event_type = normalize_event_type(ml_pred['mapped_event'])
             
             # Check cooldown to avoid duplicate events
             last_frame = self.last_ml_events.get(event_type, -999)

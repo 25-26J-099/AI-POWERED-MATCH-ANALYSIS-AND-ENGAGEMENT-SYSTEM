@@ -21,7 +21,7 @@ from app.event_detection.tracker import PlayerBallTracker
 from app.event_detection.team_assigner import TeamAssigner
 from app.event_detection.jersey_ocr import JerseyOCR
 from app.event_detection.player_reid import PlayerReIDModule
-from app.event_detection.event_detector import GameEvent
+from app.event_detection.event_detector import GameEvent, normalize_event_type
 from app.event_detection.strategic_hybrid_detector import StrategicHybridEventDetector
 from app.event_detection.statsbomb_export import StatsBombExporter
 from app.services.model_loader import download_hf_asset
@@ -185,7 +185,7 @@ class MatchAnalysisPipeline:
 
     def _build_direct_ml_event(self, ml_event: Dict, player_tracks, ball_track) -> GameEvent:
         """Convert CNN event payloads into normal GameEvent objects for export."""
-        event_type = str(ml_event.get("type") or "unknown")
+        event_type = normalize_event_type(ml_event.get("type") or "unknown")
         frame_idx = int(ml_event.get("frame") or 0)
         timestamp = float(ml_event.get("timestamp") or 0.0)
         confidence = float(ml_event.get("confidence") or 0.0)

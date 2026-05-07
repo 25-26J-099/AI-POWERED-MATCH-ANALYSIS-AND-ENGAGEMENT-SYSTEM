@@ -79,3 +79,25 @@ def test_validator_rejects_cricket_like_video(tmp_path: Path, monkeypatch):
     assert not result.is_valid
     assert result.status == "invalid"
     assert result.evidence["cricket_pitch"] >= 0.32
+
+
+def test_validator_rejects_cricket_wicket_closeup(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_FOOTBALL_VIDEO_VALIDATION", True)
+    monkeypatch.setattr(settings, "FOOTBALL_VIDEO_VALIDATION_ALLOW_UNCERTAIN", False)
+    monkeypatch.setattr(settings, "FOOTBALL_VIDEO_VALIDATION_SAMPLE_FRAMES", 6)
+
+    frame = np.full((240, 320, 3), (75, 125, 85), dtype=np.uint8)
+    cv2.line(frame, (15, 74), (305, 70), (230, 230, 230), 2)
+    cv2.line(frame, (30, 116), (280, 112), (230, 230, 230), 2)
+    cv2.rectangle(frame, (154, 10), (162, 86), (200, 55, 30), -1)
+    cv2.rectangle(frame, (138, 45), (150, 126), (35, 35, 35), -1)
+    cv2.rectangle(frame, (170, 45), (182, 126), (35, 35, 35), -1)
+
+    video_path = tmp_path / "cricket_wicket_closeup.mp4"
+    _write_video(video_path, [frame.copy() for _ in range(12)])
+
+    result = validate_football_video(video_path)
+
+    assert not result.is_valid
+    assert result.status == "invalid"
+    assert result.evidence["cricket_crease"] >= 0.55

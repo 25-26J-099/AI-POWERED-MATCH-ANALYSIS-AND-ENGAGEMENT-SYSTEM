@@ -9,7 +9,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.event_detection.event_detector import GameEvent
+from app.event_detection.event_detector import GameEvent, normalize_event_type
 
 
 _PASS_DETAILS_RE = re.compile(r"Pass\s+#(?P<sender>\d+)->(?P<recipient>\d+)\s+\(d=(?P<distance>[\d.]+)px\)")
@@ -88,7 +88,7 @@ class StatsBombExporter:
         timestamp = float(data.get("timestamp") or 0.0)
         team_id = self._safe_int(data.get("team_id"), default=-1)
         player_id = self._safe_int(data.get("player_id"), default=None)
-        event_type = str(data.get("type") or "unknown")
+        event_type = normalize_event_type(data.get("type") or "unknown")
         default_location = self._convert_coordinates(data.get("position"))
         freeze_frame = self._preserve_freeze_frame(data.get("freeze_frame"))
         start_location, end_location, recipient_id = self._infer_action_locations(
@@ -141,8 +141,8 @@ class StatsBombExporter:
                 end_location=end_location,
                 recipient_id=recipient_id,
             )
-        elif event_type in {"shot", "goal"}:
-            sb_event["shot"] = self._create_shot_details(is_goal=event_type == "goal")
+        elif event_type == "shot":
+            sb_event["shot"] = self._create_shot_details()
         elif event_type == "duel":
             sb_event["duel"] = self._create_duel_details()
         elif event_type == "carry":
@@ -178,7 +178,9 @@ class StatsBombExporter:
         if isinstance(event, GameEvent):
             return event.to_dict()
         if isinstance(event, dict):
-            return event
+            normalized = dict(event)
+            normalized["type"] = normalize_event_type(normalized.get("type") or "unknown")
+            return normalized
         raise TypeError(f"Unsupported event type: {type(event)}")
 
     def _update_possession(self, team_id: int) -> int:
@@ -194,7 +196,6 @@ class StatsBombExporter:
         type_mapping = {
             "pass": {"id": 30, "name": "Pass"},
             "shot": {"id": 16, "name": "Shot"},
-            "goal": {"id": 16, "name": "Shot"},
             "tackle": {"id": 4, "name": "Duel"},
             "possession_change": {"id": 2, "name": "Ball Recovery"},
             "out_of_bounds": {"id": 6, "name": "Ball Out"},
@@ -223,15 +224,41 @@ class StatsBombExporter:
             return None
         x_pitch = (float(pixel_pos[0]) / self.frame_width) * 120.0
         y_pitch = (float(pixel_pos[1]) / self.frame_height) * 80.0
+        x_pitch = min(120.0, max(0.0, x_pitch))
+        y_pitch = min(80.0, max(0.0, y_pitch))
+        return [round(x_pitch, 1), round(y_pitch, 1)]
+
+    @staticmethod
+    def _as_pitch_location(location: Any) -> Optional[List[float]]:
+        if not location or not isinstance(location, (list, tuple)) or len(location) < 2:
+            return None
+        x_pitch = min(120.0, max(0.0, float(location[0])))
+        y_pitch = min(80.0, max(0.0, float(location[1])))
         return [round(x_pitch, 1), round(y_pitch, 1)]
 
     def _preserve_freeze_frame(self, freeze_frame: Any) -> Optional[Dict[str, Any]]:
-        """
-        Preserve freeze-frame payload exactly as provided by internal event output.
+        """Preserve freeze-frame, converting all player/ball locations to pitch units.
+
+        Player locations from the tracking pipeline are in video pixel coordinates.
+        They must be converted to StatsBomb pitch units (0-120 × 0-80) using the
+        same linear mapping as _convert_coordinates so that analytics (xG etc.) can
+        use them directly without knowing the original frame dimensions.
         """
         if not isinstance(freeze_frame, dict):
             return None
-        return deepcopy(freeze_frame)
+        result = deepcopy(freeze_frame)
+        for player in result.get("players", []):
+            loc = player.get("location")
+            if loc and len(loc) >= 2:
+                converted = self._convert_coordinates(loc)
+                if converted:
+                    player["location"] = converted
+        ball_loc = result.get("ball_location")
+        if ball_loc:
+            converted_ball = self._convert_coordinates(ball_loc)
+            if converted_ball:
+                result["ball_location"] = converted_ball
+        return result
 
     def _infer_action_locations(
         self,
@@ -330,13 +357,13 @@ class StatsBombExporter:
         for player in freeze_frame.get("players", []):
             if self._safe_int(player.get("player_id"), None) != player_id:
                 continue
-            return self._convert_coordinates(player.get("location"))
+            return self._as_pitch_location(player.get("location"))
         return None
 
     def _freeze_frame_ball_location(self, freeze_frame: Optional[Dict[str, Any]]) -> Optional[List[float]]:
         if not freeze_frame:
             return None
-        return self._convert_coordinates(freeze_frame.get("ball_location"))
+        return self._as_pitch_location(freeze_frame.get("ball_location"))
 
     def _remember_player_location(
         self,
@@ -402,13 +429,12 @@ class StatsBombExporter:
             details["end_location"] = end_location
         return details
 
-    def _create_shot_details(self, is_goal: bool = False) -> Dict[str, Any]:
-        outcome = {"id": 97, "name": "Goal"} if is_goal else {"id": 96, "name": "Off T"}
+    def _create_shot_details(self) -> Dict[str, Any]:
         return {
             "type": {"id": 87, "name": "Open Play"},
             "body_part": {"id": 40, "name": "Right Foot"},
             "technique": {"id": 93, "name": "Normal"},
-            "outcome": outcome,
+            "outcome": {"id": 96, "name": "Off T"},
         }
 
     def _create_duel_details(self) -> Dict[str, Any]:

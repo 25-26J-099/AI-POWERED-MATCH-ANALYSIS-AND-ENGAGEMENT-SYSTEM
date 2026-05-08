@@ -11,6 +11,12 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
+# Cloud Build passes --build-arg BUILD_ID=$BUILD_ID (unique per build).
+# Placing this ARG before COPY . . ensures Docker invalidates the COPY and
+# npm run build layers on every Cloud Build run, preventing stale layer cache
+# from silently reusing an old JS bundle when source files change.
+ARG BUILD_ID=0
+
 # Copy source and build
 COPY . .
 

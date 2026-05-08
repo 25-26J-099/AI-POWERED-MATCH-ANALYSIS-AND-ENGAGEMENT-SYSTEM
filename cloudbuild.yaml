@@ -43,6 +43,8 @@ steps:
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/frontend:latest
       - --cache-from
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/frontend:latest
+      - --build-arg
+      - BUILD_ID=$BUILD_ID
       - ./frontend
     waitFor: ['-']
 

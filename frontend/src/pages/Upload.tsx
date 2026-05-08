@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { uploadVideo, validateFootballVideo } from '../api/client';
+import { uploadVideo } from '../api/client';
 
 const COMMENTARY_LEVELS = ['Auto', 'Beginner', 'Intermediate', 'Expert'] as const;
 const COMMENTARY_VERBOSITY = ['low', 'medium', 'high'] as const;
@@ -17,64 +17,31 @@ export default function Upload() {
     const [educationalMode, setEducationalMode] = useState(false);
     const [progress, setProgress] = useState(0);
     const [uploading, setUploading] = useState(false);
-    const [validatingFile, setValidatingFile] = useState(false);
-    const [pendingFileName, setPendingFileName] = useState('');
     const [validationMessage, setValidationMessage] = useState('');
     const [validationStatus, setValidationStatus] = useState('');
     const [error, setError] = useState('');
     const [dragOver, setDragOver] = useState(false);
-    const validationRun = useRef(0);
 
-    const handleFile = async (candidate: File | null | undefined) => {
+    const handleFile = (candidate: File | null | undefined) => {
         if (!candidate) {
             return;
         }
-        const runId = validationRun.current + 1;
-        validationRun.current = runId;
         setFile(null);
         setProgress(0);
         setValidationMessage('');
         setValidationStatus('');
 
-        if (!candidate.type.startsWith('video/')) {
+        const hasVideoMime = candidate.type.startsWith('video/');
+        const hasVideoExtension = /\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(candidate.name);
+        if (!hasVideoMime && !hasVideoExtension) {
             setError('Please upload a video file.');
             return;
         }
 
         setError('');
-        setPendingFileName(candidate.name);
-        setValidatingFile(true);
-        setValidationStatus('checking');
-        setValidationMessage('Checking whether this is football match footage...');
-
-        try {
-            const response = await validateFootballVideo(candidate);
-            if (validationRun.current !== runId) {
-                return;
-            }
-            const validation = response.data;
-            setValidationStatus(validation.status);
-            setValidationMessage(validation.message);
-            if (validation.is_valid) {
-                setFile(candidate);
-            } else {
-                setFile(null);
-                setError(validation.message);
-            }
-        } catch (err: any) {
-            if (validationRun.current !== runId) {
-                return;
-            }
-            const detail = err.response?.data?.detail || 'Could not validate this video. Please try another file.';
-            setFile(null);
-            setValidationStatus('invalid');
-            setValidationMessage(detail);
-            setError(detail);
-        } finally {
-            if (validationRun.current === runId) {
-                setValidatingFile(false);
-            }
-        }
+        setFile(candidate);
+        setValidationStatus('ready');
+        setValidationMessage('Ready to upload.');
     };
 
     const handleUpload = async () => {
@@ -132,7 +99,7 @@ export default function Upload() {
                 }}
                 onDragLeave={() => setDragOver(false)}
                 onClick={() => {
-                    if (!uploading && !validatingFile) {
+                    if (!uploading) {
                         const input = document.getElementById('video-input') as HTMLInputElement | null;
                         if (input) {
                             input.value = '';
@@ -144,29 +111,27 @@ export default function Upload() {
                     border: dragOver ? '2px dashed var(--accent)' : '2px dashed var(--border-subtle)',
                     textAlign: 'center',
                     padding: '72px 40px',
-                    cursor: uploading || validatingFile ? 'not-allowed' : 'pointer',
+                    cursor: uploading ? 'not-allowed' : 'pointer',
                     background: dragOver ? 'rgba(99,102,241,0.05)' : 'var(--bg-glass)',
                     transition: 'all 0.3s',
                 }}
             >
                 <div style={{ fontSize: '4rem', marginBottom: '16px' }}>🎬</div>
                 <h3 style={{ fontSize: '1.3rem', fontWeight: 600, marginBottom: '8px' }}>
-                    {validatingFile ? pendingFileName : file ? file.name : 'Drop your match video here'}
+                    {file ? file.name : 'Drop your match video here'}
                 </h3>
                 <p style={{ color: 'var(--text-secondary)' }}>
-                    {validatingFile
-                        ? 'Checking football match content before upload...'
-                        : file
-                            ? `${(file.size / 1024 / 1024).toFixed(1)} MB ready to process`
-                            : 'or click to browse - MP4, AVI, MOV'}
+                    {file
+                        ? `${(file.size / 1024 / 1024).toFixed(1)} MB ready to process`
+                        : 'or click to browse - MP4, AVI, MOV'}
                 </p>
                 <input
                     id="video-input"
                     type="file"
                     accept="video/*"
                     style={{ display: 'none' }}
-                    disabled={uploading || validatingFile}
-                    onChange={(e) => void handleFile(e.target.files?.[0])}
+                    disabled={uploading}
+                    onChange={(e) => handleFile(e.target.files?.[0])}
                 />
             </div>
 
@@ -331,7 +296,7 @@ export default function Upload() {
                     <button
                         className="btn-primary"
                         onClick={handleUpload}
-                        disabled={uploading || validatingFile || !file}
+                        disabled={uploading || !file}
                         style={{ width: '100%', padding: '16px' }}
                     >
                         {uploading ? 'Uploading...' : `Upload and Start Analysis (${commentaryLevel}) ->`}

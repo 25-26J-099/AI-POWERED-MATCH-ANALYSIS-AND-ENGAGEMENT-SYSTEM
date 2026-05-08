@@ -40,10 +40,16 @@ class TeamMappingRequest(BaseModel):
     team_names: dict[int, str] = Field(..., min_length=2)
 
 
+_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+
+
 @router.post("/validate-football-video")
 async def validate_uploaded_football_video(video: UploadFile = File(...)):
     """Preflight-check a selected video before creating a match upload."""
-    if video.content_type and not video.content_type.startswith("video/"):
+    filename = video.filename or "validation_video.mp4"
+    ext = Path(filename).suffix.lower() or ".mp4"
+    content_type = video.content_type or ""
+    if content_type and not content_type.startswith("video/") and ext not in _VIDEO_EXTENSIONS:
         return {
             "is_valid": False,
             "status": "invalid",
@@ -55,8 +61,6 @@ async def validate_uploaded_football_video(video: UploadFile = File(...)):
             "frame_scores": [],
         }
 
-    filename = video.filename or "validation_video.mp4"
-    ext = Path(filename).suffix or ".mp4"
     validation_dir = Path(settings.UPLOAD_DIR) / "validation"
     validation_dir.mkdir(parents=True, exist_ok=True)
     temp_path = validation_dir / f"{uuid.uuid4().hex}{ext}"

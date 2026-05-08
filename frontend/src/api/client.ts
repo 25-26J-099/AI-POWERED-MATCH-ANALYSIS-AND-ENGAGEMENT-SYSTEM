@@ -42,7 +42,7 @@ export const validateFootballVideo = (file: File) =>
         return f;
     })(), {
         headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000,
+        timeout: 0,
     });
 
 export const uploadVideo = (
@@ -63,6 +63,7 @@ export const uploadVideo = (
         return f;
     })(), {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 0,
         onUploadProgress: (e) => onProgress?.(Math.round((e.loaded * 100) / (e.total || 1))),
     });
 

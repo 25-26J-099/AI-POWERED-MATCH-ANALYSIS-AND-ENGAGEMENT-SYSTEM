@@ -92,7 +92,7 @@ steps:
       - -c
       - |
         set -euo pipefail
-        current_type="$(gcloud compute instances describe ${_GCE_VM} --zone=${_GCE_ZONE} --format='value(machineType)' | awk -F/ '{print $NF}')"
+        current_type="$(gcloud compute instances describe ${_GCE_VM} --zone=${_GCE_ZONE} --format='value(machineType)' | sed 's#.*/##')"
         if [ "${current_type}" != "g2-standard-32" ]; then
           echo "Resizing ${_GCE_VM} from ${current_type} to g2-standard-32..."
           vm_region="${_GCE_ZONE%-*}"

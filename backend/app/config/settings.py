@@ -70,6 +70,15 @@ class Settings(BaseSettings):
     )
     ANALYSIS_MAX_INPUT_WIDTH: int = Field(default=960, description="Maximum analysis-frame width for the tracking pipeline")
     ANALYSIS_MAX_INPUT_HEIGHT: int = Field(default=540, description="Maximum analysis-frame height for the tracking pipeline")
+    YOLO_BATCH_SIZE: int = Field(default=16, description="Batch size for YOLO video-frame inference on CUDA.")
+    ANALYSIS_CPU_THREADS: int = Field(
+        default=0,
+        description="OpenCV CPU worker threads for CPU-bound tracking work. 0 uses all CPUs visible to the container.",
+    )
+    ANALYSIS_MAX_WORKERS: int = Field(
+        default=1,
+        description="Maximum concurrent video-analysis jobs. Keep at 1 for a single GPU to avoid CUDA contention.",
+    )
 
     REID_BACKEND_PRIORITY: str = Field(
         default="fastreid,torchreid,handcrafted",
@@ -90,16 +99,16 @@ class Settings(BaseSettings):
         description="Fail startup when FastReID is required but unavailable",
     )
     FASTREID_DEVICE: str = Field(
-        default="cpu",
-        description="Preferred FastReID device: auto, cpu, or cuda. CPU preferred — GPU overhead dominates for small Re-ID crops on a powerful CPU.",
+        default="auto",
+        description="Preferred FastReID device: auto, cpu, or cuda.",
     )
     TORCHREID_DEVICE: str = Field(
-        default="cpu",
-        description="Preferred torchreid device: auto, cpu, or cuda. CPU preferred — saves GPU for YOLO.",
+        default="auto",
+        description="Preferred torchreid device: auto, cpu, or cuda.",
     )
     TORCHREID_ALLOW_CPU: bool = Field(
         default=True,
-        description="Allow torchreid to run on CPU. Enabled — 32-vCPU host makes CPU Re-ID faster than GPU round-trip overhead.",
+        description="Allow torchreid to fall back to CPU when CUDA is unavailable.",
     )
     FASTREID_CONFIG_PATH: str = Field(
         default="./models/reid/fastreid/configs/football_vit.yml",
@@ -115,18 +124,18 @@ class Settings(BaseSettings):
     GNN_EDGE_STRATEGY: str = Field(default="knn", description="Graph edge strategy: knn or radius")
     GNN_K_NEIGHBORS: int = Field(default=4, description="k for k-nearest-neighbor graph construction")
     GNN_RADIUS: float = Field(default=18.0, description="Radius used when GNN_EDGE_STRATEGY=radius")
-    GNN_DEVICE: str = Field(default="cpu", description="Device for tactical GNN inference: cpu, cuda, or auto")
+    GNN_DEVICE: str = Field(default="auto", description="Device for tactical GNN inference: cpu, cuda, or auto")
     OCR_ENABLE: bool = Field(
         default=True,
         description="Enable jersey-number OCR during tracking.",
     )
     OCR_USE_GPU: bool = Field(
-        default=False,
-        description="Allow EasyOCR jersey-number recognition to use CUDA. Disabled — CPU is faster for small jersey crops and frees GPU for YOLO.",
+        default=True,
+        description="Allow EasyOCR jersey-number recognition to use CUDA when available.",
     )
     ML_CLASSIFIER_DEVICE: str = Field(
-        default="cpu",
-        description="Device for ML event classifier (EventClassifier CNN). CPU preferred — lightweight model, GPU transfer overhead not worth it.",
+        default="auto",
+        description="Device for ML event classifier: auto, cpu, or cuda.",
     )
     OCR_UPDATE_INTERVAL: int = Field(
         default=10,

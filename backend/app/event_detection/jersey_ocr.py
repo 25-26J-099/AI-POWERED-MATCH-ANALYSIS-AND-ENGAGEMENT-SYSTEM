@@ -116,6 +116,7 @@ class JerseyOCR:
         self.track_quality: Dict[int, float] = {}
         self.track_last_signature: Dict[int, float] = {}
         self.track_last_bbox_area: Dict[int, float] = {}
+        self.track_last_ocr_frame: Dict[int, int] = {}
 
         if self.enable:
             self._initialize_reader()
@@ -474,17 +475,20 @@ class JerseyOCR:
             current_area = float(max(0.0, (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])))
             existing_number = self.track_numbers.get(track_id)
             existing_state = self.track_states.get(track_id, "unknown")
+            last_ocr_frame = self.track_last_ocr_frame.get(track_id, -10**9)
+            retry_due = (frame_idx - last_ocr_frame) >= self.update_interval
+            stable_cadence_due = (frame_idx + abs(int(track_id))) % self.update_interval == 0
             area_changed = False
             if track_id in self.track_last_bbox_area and self.track_last_bbox_area[track_id] > 0:
                 ratio = current_area / self.track_last_bbox_area[track_id]
                 area_changed = ratio > 1.25 or ratio < 0.8
 
             should_refresh = (
-                existing_number is None
-                or existing_state != "stable"
-                or getattr(track, "frames_tracked", 0) <= 2
+                (getattr(track, "frames_tracked", 0) <= 2 and retry_due)
+                or (existing_number is None and retry_due)
+                or (existing_state != "stable" and retry_due)
                 or area_changed
-                or frame_idx % self.update_interval == 0
+                or (existing_state == "stable" and stable_cadence_due)
             )
 
             candidates = self.crop_jersey_candidates(frame, bbox) if should_refresh else []
@@ -510,6 +514,7 @@ class JerseyOCR:
                     variant.crop_quality_score = candidate.quality_score
                     variants.append(variant)
 
+            self.track_last_ocr_frame[track_id] = frame_idx
             ocr_result = self.aggregate_variant_results(variants)
             stable_number, stable_confidence, state = self.update_track(track_id, ocr_result, frame_idx)
 

@@ -337,17 +337,101 @@ class ReIDModel:
         return tensor
 
     def extract_embedding(self, image: np.ndarray) -> Optional[np.ndarray]:
-        prepared = self.prepare_image(image)
-        if prepared is None:
-            return None
+        embeddings = self.extract_embeddings([image])
+        return embeddings[0] if embeddings else None
+
+    def extract_embeddings(self, images: Sequence[np.ndarray]) -> list[Optional[np.ndarray]]:
+        """Extract embeddings for a batch of player crops.
+
+        Batched inference matters on GPUs: sending 15-25 tiny player crops one by
+        one keeps the accelerator mostly idle and pays the host/device transfer
+        cost repeatedly.
+        """
+        outputs: list[Optional[np.ndarray]] = [None] * len(images)
+        prepared_images: list[np.ndarray] = []
+        prepared_indices: list[int] = []
+
+        for idx, image in enumerate(images):
+            prepared = self.prepare_image(image)
+            if prepared is None:
+                continue
+            prepared_indices.append(idx)
+            prepared_images.append(prepared)
+
+        if not prepared_images:
+            return outputs
 
         if self.backend == "fastreid":
-            embedding = self._extract_fastreid(prepared)
+            embeddings = self._extract_fastreid_batch(prepared_images)
         elif self.backend == "torchreid":
-            embedding = self._extract_torchreid(prepared)
+            embeddings = self._extract_torchreid_batch(prepared_images)
         else:
-            embedding = self._extract_handcrafted(prepared)
-        return _normalize_vector(embedding)
+            embeddings = [self._extract_handcrafted(image) for image in prepared_images]
+
+        for idx, embedding in zip(prepared_indices, embeddings):
+            outputs[idx] = _normalize_vector(embedding)
+        return outputs
+
+    def _extract_fastreid_batch(self, images: Sequence[np.ndarray]) -> list[Optional[np.ndarray]]:
+        if self.model is None or torch is None:
+            return [None] * len(images)
+        try:
+            tensors = [self._prepare_fastreid_tensor(image) for image in images]
+            tensors = [tensor for tensor in tensors if tensor is not None]
+            if len(tensors) != len(images):
+                return [self._extract_fastreid(image) for image in images]
+
+            batched = torch.cat(tensors, dim=0)
+            with torch.inference_mode():
+                prediction = self.model(batched)
+            if isinstance(prediction, dict):
+                for key in ("features", "embeddings", "outputs"):
+                    if key in prediction:
+                        prediction = prediction[key]
+                        break
+            if hasattr(prediction, "detach"):
+                prediction = prediction.detach().cpu().numpy()
+            arr = np.asarray(prediction, dtype=np.float32)
+            if arr.ndim == 1:
+                arr = arr.reshape(1, -1)
+            if arr.shape[0] != len(images):
+                return [self._extract_fastreid(image) for image in images]
+            return [arr[idx].reshape(-1) for idx in range(arr.shape[0])]
+        except Exception as exc:  # noqa: BLE001 - batched backend fallback must be resilient
+            logger.warning("[Re-ID] Batched FastReID extraction failed, using single-crop fallback: %s", exc)
+            return [self._extract_fastreid(image) for image in images]
+
+    def _extract_torchreid_batch(self, images: Sequence[np.ndarray]) -> list[Optional[np.ndarray]]:
+        if self.feature_extractor is None:
+            return [None] * len(images)
+        try:
+            rgb_images = [image[:, :, ::-1] for image in images]
+            prediction = self.feature_extractor(rgb_images)
+            if hasattr(prediction, "detach"):
+                prediction = prediction.detach().cpu().numpy()
+            arr = np.asarray(prediction, dtype=np.float32)
+            if arr.ndim == 1:
+                arr = arr.reshape(1, -1)
+            if arr.shape[0] != len(images):
+                return [self._extract_torchreid(image) for image in images]
+            return [arr[idx].reshape(-1) for idx in range(arr.shape[0])]
+        except Exception as exc:  # noqa: BLE001 - backend fallback must be resilient
+            if "cuda" in str(exc).lower():
+                self.feature_extractor = None
+                self.backend = "handcrafted"
+                self.backend_reason = "torchreid CUDA batch extraction failed; switched to handcrafted fallback"
+                logger.warning(
+                    "[Re-ID] torchreid CUDA batch extraction failed; disabling torchreid and using handcrafted fallback: %s",
+                    exc,
+                )
+                if torch is not None and hasattr(torch, "cuda") and torch.cuda.is_available():
+                    try:
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+                return [self._extract_handcrafted(image) for image in images]
+            logger.warning("[Re-ID] Batched torchreid extraction failed, using single-crop fallback: %s", exc)
+            return [self._extract_torchreid(image) for image in images]
 
     def _extract_fastreid(self, image: np.ndarray) -> Optional[np.ndarray]:
         if self.model is None or torch is None:

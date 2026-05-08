@@ -1,5 +1,5 @@
 # ── Backend Dockerfile ────────────────────────────────────────────────────────
-# Base: CUDA 12.4.1 + cuDNN 9 on Ubuntu 22.04 (compatible with A100 GPU).
+# Base: CUDA 12.4.1 + cuDNN 9 on Ubuntu 22.04 (compatible with NVIDIA L4 on G2 VMs).
 # Single worker process shares the GPU across async handlers to avoid OOM.
 
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04

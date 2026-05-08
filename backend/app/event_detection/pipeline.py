@@ -44,6 +44,13 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _visible_cpu_count() -> int:
+    try:
+        return len(os.sched_getaffinity(0))
+    except Exception:
+        return os.cpu_count() or 1
+
+
 def _pf(v):
     """Convert any numeric to plain Python float."""
     return float(v) if v is not None else 0.0
@@ -52,6 +59,7 @@ def _pf(v):
 class MatchAnalysisPipeline:
     def __init__(self, config: PipelineConfig):
         self.config = config
+        self._configure_cpu_runtime()
         self.preprocessor = VideoPreprocessor(config)
         self.tracker = PlayerBallTracker(config)
         self.team_assigner = TeamAssigner(config)
@@ -82,6 +90,19 @@ class MatchAnalysisPipeline:
         # Initialize ML detector if configured
         if ML_AVAILABLE and config.ml_model.enable_ml_detector:
             self._initialize_ml_detector()
+
+    def _configure_cpu_runtime(self) -> None:
+        """Let OpenCV CPU work use the CPUs visible to the container."""
+        if not getattr(self.config.optimization, "enable_multithreading", True):
+            return
+        requested_threads = int(getattr(self.config.optimization, "num_worker_threads", 0) or 0)
+        thread_count = requested_threads if requested_threads > 0 else _visible_cpu_count()
+        try:
+            cv2.setUseOptimized(True)
+            cv2.setNumThreads(max(1, thread_count))
+            logger.info("[Runtime] OpenCV CPU threads=%s", cv2.getNumThreads())
+        except Exception as exc:
+            logger.debug("[Runtime] OpenCV threading configuration skipped: %s", exc)
 
     def _initialize_ml_detector(self):
         """Initialize ML event detector if available and configured."""
@@ -270,7 +291,11 @@ class MatchAnalysisPipeline:
             "total_frames": reader.total_frames,
             "duration_seconds": reader.duration,
             "ml_detector_enabled": self._ml_enabled,
+            "detection_device": self.config.detection.device,
+            "detection_batch_size": self.config.detection.batch_size,
             "reid_backend": reid_status["backend"],
+            "reid_device": reid_status.get("device"),
+            "torchreid_device": reid_status.get("torchreid_device"),
             "reid_model_path": reid_status["resolved_weights_path"],
             "reid_config_path": reid_status["resolved_config_path"],
             "reid_fallback_reason": reid_status["fallback_reason"],
@@ -300,148 +325,178 @@ class MatchAnalysisPipeline:
         last_player_tracks = {}
         last_ball_track = None
         last_frame_idx = 0
+        yolo_batch_size = max(1, int(getattr(self.config.detection, "batch_size", 1) or 1))
+        logger.info("YOLO inference batch size: %s", yolo_batch_size)
+
+        def _run_frame(
+            frame_idx: int,
+            frame: np.ndarray,
+            processed: np.ndarray,
+            detections,
+        ) -> None:
+            nonlocal total_proc, last_frame, last_player_tracks, last_ball_track, last_frame_idx
+
+            # Module 2: Detection + Tracking
+            player_tracks, ball_track = self.tracker.process_detections(processed, detections, frame_idx)
+
+            # Team fitting (first ~30 frames)
+            self._collect_and_fit_teams(frame, player_tracks)
+
+            # Continuous team assignment (cadenced inside helper)
+            self._assign_teams_continuous(frame, player_tracks, frame_idx)
+
+            # Module 2.25: Jersey OCR on tracked player crops
+            self.jersey_ocr.process_tracks(frame, player_tracks, frame_idx)
+
+            # Module 2.5: ROBUST RE-ID - Map ByteTrack IDs to Stable IDs
+            player_tracks = self.robust_reid.process_frame(frame, player_tracks, frame_idx)
+
+            # Module 3: Optional legacy Re-ID gallery. RobustReIDSystem is the primary ID mapper.
+            if self.config.reid.enable and self.config.reid.enable_legacy_gallery and self._team_fitted:
+                lost = self.tracker.get_lost_tracks()
+                self.reid_module.update_gallery(
+                    frame, player_tracks, lost, frame_idx
+                )
+
+            # v4: Module 3.5: ML Event Detection (if enabled)
+            ml_frame_events = []
+            if self._ml_enabled and self.ml_detector:
+                self.ml_detector.update_buffer(frame)
+
+                if self.hybrid_event_system:
+                    ball_pos = ball_track.center if ball_track and ball_track.frames_lost < 5 else None
+                    ml_events = self.hybrid_event_system.detect_events(
+                        frame, ball_pos, player_tracks, frame_idx, self.fps
+                    )
+                    for ml_event in ml_events:
+                        event = self._build_direct_ml_event(
+                            ml_event, player_tracks, ball_track
+                        )
+                        self.event_detector.events.append(event)
+                        ml_frame_events.append(event)
+
+            # Module 4: Event Detection (rule-based + ML hybrid)
+            rule_events = self.event_detector.process_frame(
+                processed, player_tracks, ball_track, frame_idx, self.fps
+            )
+            events = [*ml_frame_events, *rule_events]
+
+            # ── Data export ────────────────────────────────────
+            for tid, track in player_tracks.items():
+                if not track.is_ball:
+                    self.exporter.add_player_position(
+                        frame_idx, tid, track.bbox,
+                        (_pf(track.center[0]), _pf(track.center[1])),
+                        track.team_id,
+                        _pf(track.velocity),
+                    )
+
+            if ball_track and ball_track.frames_lost < 5:
+                self.exporter.add_ball_position(
+                    frame_idx,
+                    (_pf(ball_track.center[0]), _pf(ball_track.center[1])),
+                )
+                poss = self.event_detector.rule.possession_player
+                poss_team = self.event_detector.rule.possession_team
+                if poss is not None and poss_team >= 0:
+                    self.exporter.add_possession(frame_idx, poss_team, poss)
+
+            # v4: Export events with freeze frames
+            for ev in events:
+                self.exporter.add_event(self._enrich_event_team(ev.to_dict()))
+
+            # ── Visualization ──────────────────────────────────
+            annotated = frame.copy()
+
+            for tid, track in player_tracks.items():
+                if track.is_ball:
+                    continue
+                annotated = self.annotator.draw_player(
+                    annotated, track.bbox, tid,
+                    team_id=track.team_id,
+                    is_referee=track.is_referee,
+                )
+
+            if ball_track and ball_track.frames_lost < 10:
+                annotated = self.annotator.draw_ball(annotated, ball_track.center)
+
+            for ev in events:
+                annotated = self.annotator.draw_event(annotated, ev.to_dict(), frame_idx)
+
+            t0_pct, t1_pct = self.event_detector.get_possession_stats()
+            annotated = self.annotator.draw_possession_bar(annotated, t0_pct, t1_pct)
+
+            if self.config.visualization.draw_minimap:
+                positions = {
+                    tid: (_pf(t.center[0]), _pf(t.center[1]))
+                    for tid, t in player_tracks.items() if not t.is_ball
+                }
+                teams = {tid: t.team_id for tid, t in player_tracks.items() if not t.is_ball}
+                ball_pos = (
+                    (_pf(ball_track.center[0]), _pf(ball_track.center[1]))
+                    if ball_track and ball_track.frames_lost < 5 else None
+                )
+                annotated = self.annotator.draw_minimap(annotated, positions, teams, ball_pos)
+
+            stats_hud = {
+                "events_total": len(self.event_detector.events),
+                "players_detected": len(player_tracks),
+            }
+            if self._ml_enabled:
+                stats_hud["ml_detector"] = "ON"
+            annotated = self.annotator.draw_stats_hud(annotated, frame_idx, self.fps, stats_hud)
+
+            writer.write(annotated)
+            self.frame_count += 1
+            total_proc = time.time() - start_time
+            last_frame = frame
+            last_player_tracks = player_tracks
+            last_ball_track = ball_track
+            last_frame_idx = frame_idx
+
+            if frame_idx % 100 == 0 and frame_idx > 0:
+                avg_fps = self.frame_count / max(total_proc, 1e-6)
+                pct = frame_idx / reader.total_frames * 100 if reader.total_frames else 0
+                logger.info(
+                    f"Frame {frame_idx}/{reader.total_frames} ({pct:.1f}%) | "
+                    f"{avg_fps:.1f} FPS | Players: {len(player_tracks)} | "
+                    f"Events: {len(self.event_detector.events)}"
+                )
+                if progress_callback is not None:
+                    try:
+                        progress_callback(frame_idx, reader.total_frames or 0, pct)
+                    except Exception:
+                        pass  # never let a progress callback crash the pipeline
 
         try:
-            for frame_idx, frame in reader.read_frames():
-                t0 = time.time()
-
-                # Module 1: Preprocessing
-                processed = self.preprocessor.process_single_frame(frame)
-
-                # Module 2: Detection + Tracking
-                player_tracks, ball_track = self.tracker.process_frame(processed, frame_idx)
-
-                # Team fitting (first ~30 frames)
-                self._collect_and_fit_teams(frame, player_tracks)
-
-                # Continuous team assignment (EVERY frame, not cached)
-                self._assign_teams_continuous(frame, player_tracks, frame_idx)
-
-                # Module 2.25: Jersey OCR on tracked player crops
-                self.jersey_ocr.process_tracks(frame, player_tracks, frame_idx)
-
-                # Module 2.5: ROBUST RE-ID - Map ByteTrack IDs to Stable IDs
-                player_tracks = self.robust_reid.process_frame(frame, player_tracks, frame_idx)
-
-                # Module 3: Optional legacy Re-ID gallery. RobustReIDSystem is the primary ID mapper.
-                if self.config.reid.enable and self.config.reid.enable_legacy_gallery and self._team_fitted:
-                    lost = self.tracker.get_lost_tracks()
-                    self.reid_module.update_gallery(
-                        frame, player_tracks, lost, frame_idx
+            for batch in reader.read_batch(batch_size=yolo_batch_size):
+                processed_frames = [
+                    self.preprocessor.process_single_frame(frame)
+                    for _, frame in batch
+                ]
+                try:
+                    detections_batch = self.tracker.detector.detect_batch(processed_frames)
+                except RuntimeError as exc:
+                    if "out of memory" not in str(exc).lower():
+                        raise
+                    logger.warning(
+                        "YOLO batch inference ran out of GPU memory at batch_size=%s; "
+                        "falling back to per-frame inference for this batch.",
+                        yolo_batch_size,
                     )
-                
-                # v4: Module 3.5: ML Event Detection (if enabled)
-                ml_frame_events = []
-                if self._ml_enabled and self.ml_detector:
-                    # Update ML detector with current frame
-                    self.ml_detector.update_buffer(frame)
-                    
-                    # Get ML events (handled by hybrid system)
-                    if self.hybrid_event_system:
-                        ball_pos = ball_track.center if ball_track and ball_track.frames_lost < 5 else None
-                        ml_events = self.hybrid_event_system.detect_events(
-                            frame, ball_pos, player_tracks, frame_idx, self.fps
-                        )
-                        # ML events are added to event detector's event list
-                        for ml_event in ml_events:
-                            event = self._build_direct_ml_event(
-                                ml_event, player_tracks, ball_track
-                            )
-                            self.event_detector.events.append(event)
-                            ml_frame_events.append(event)
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+                    detections_batch = [
+                        self.tracker.detector.detect(processed)
+                        for processed in processed_frames
+                    ]
 
-                # Module 4: Event Detection (rule-based + ML hybrid)
-                rule_events = self.event_detector.process_frame(
-                    processed, player_tracks, ball_track, frame_idx, self.fps
-                )
-                events = [*ml_frame_events, *rule_events]
-
-                # ── Data export ────────────────────────────────────
-                for tid, track in player_tracks.items():
-                    if not track.is_ball:
-                        self.exporter.add_player_position(
-                            frame_idx, tid, track.bbox,
-                            (_pf(track.center[0]), _pf(track.center[1])),
-                            track.team_id,
-                            _pf(track.velocity),
-                        )
-
-                if ball_track and ball_track.frames_lost < 5:
-                    self.exporter.add_ball_position(
-                        frame_idx,
-                        (_pf(ball_track.center[0]), _pf(ball_track.center[1])),
-                    )
-                    poss = self.event_detector.rule.possession_player
-                    poss_team = self.event_detector.rule.possession_team
-                    if poss is not None and poss_team >= 0:
-                        self.exporter.add_possession(frame_idx, poss_team, poss)
-
-                # v4: Export events with freeze frames
-                for ev in events:
-                    self.exporter.add_event(self._enrich_event_team(ev.to_dict()))
-
-                # ── Visualization ──────────────────────────────────
-                annotated = frame.copy()
-
-                for tid, track in player_tracks.items():
-                    if track.is_ball:
-                        continue
-                    annotated = self.annotator.draw_player(
-                        annotated, track.bbox, tid,
-                        team_id=track.team_id,
-                        is_referee=track.is_referee,
-                    )
-
-                if ball_track and ball_track.frames_lost < 10:
-                    annotated = self.annotator.draw_ball(annotated, ball_track.center)
-
-                for ev in events:
-                    annotated = self.annotator.draw_event(annotated, ev.to_dict(), frame_idx)
-
-                t0_pct, t1_pct = self.event_detector.get_possession_stats()
-                annotated = self.annotator.draw_possession_bar(annotated, t0_pct, t1_pct)
-
-                if self.config.visualization.draw_minimap:
-                    positions = {
-                        tid: (_pf(t.center[0]), _pf(t.center[1]))
-                        for tid, t in player_tracks.items() if not t.is_ball
-                    }
-                    teams = {tid: t.team_id for tid, t in player_tracks.items() if not t.is_ball}
-                    ball_pos = (
-                        (_pf(ball_track.center[0]), _pf(ball_track.center[1]))
-                        if ball_track and ball_track.frames_lost < 5 else None
-                    )
-                    annotated = self.annotator.draw_minimap(annotated, positions, teams, ball_pos)
-
-                stats_hud = {
-                    "events_total": len(self.event_detector.events),
-                    "players_detected": len(player_tracks),
-                }
-                if self._ml_enabled:
-                    stats_hud["ml_detector"] = "ON"
-                annotated = self.annotator.draw_stats_hud(annotated, frame_idx, self.fps, stats_hud)
-
-                writer.write(annotated)
-                self.frame_count += 1
-                total_proc += time.time() - t0
-                last_frame = frame
-                last_player_tracks = player_tracks
-                last_ball_track = ball_track
-                last_frame_idx = frame_idx
-
-                if frame_idx % 100 == 0 and frame_idx > 0:
-                    avg_fps = self.frame_count / total_proc
-                    pct = frame_idx / reader.total_frames * 100 if reader.total_frames else 0
-                    logger.info(
-                        f"Frame {frame_idx}/{reader.total_frames} ({pct:.1f}%) | "
-                        f"{avg_fps:.1f} FPS | Players: {len(player_tracks)} | "
-                        f"Events: {len(self.event_detector.events)}"
-                    )
-                    if progress_callback is not None:
-                        try:
-                            progress_callback(frame_idx, reader.total_frames or 0, pct)
-                        except Exception:
-                            pass  # never let a progress callback crash the pipeline
+                for (frame_idx, frame), processed, detections in zip(batch, processed_frames, detections_batch):
+                    _run_frame(frame_idx, frame, processed, detections)
             completed_naturally = True
 
         except KeyboardInterrupt:
@@ -477,7 +532,7 @@ class MatchAnalysisPipeline:
                 self.exporter.add_event(self._enrich_event_team(event.to_dict()))
 
         elapsed = time.time() - start_time
-        avg_fps = self.frame_count / total_proc if total_proc > 0 else 0
+        avg_fps = self.frame_count / elapsed if elapsed > 0 else 0
 
         logger.info("=" * 60)
         logger.info("Processing Complete")

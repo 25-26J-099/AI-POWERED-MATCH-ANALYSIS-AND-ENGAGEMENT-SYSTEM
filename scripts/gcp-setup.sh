@@ -165,7 +165,7 @@ echo "    This may take 2–3 minutes..."
 
 $GCLOUD compute instances create "${VM_NAME}" \
   --zone="${ZONE}" \
-  --machine-type=g2-standard-8 \
+  --machine-type=g2-standard-32 \
   --maintenance-policy=TERMINATE \
   --restart-on-failure \
   --image-family=ubuntu-2204-lts \

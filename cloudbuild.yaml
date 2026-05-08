@@ -85,6 +85,34 @@ steps:
     waitFor: [push-frontend]
 
   # ── 6a. Copy compose file + init SQL from Cloud Build workspace to VM ────────
+  - id: ensure-backend-machine-type
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        current_type="$(gcloud compute instances describe ${_GCE_VM} --zone=${_GCE_ZONE} --format='value(machineType)' | awk -F/ '{print $NF}')"
+        if [ "${current_type}" != "g2-standard-32" ]; then
+          echo "Resizing ${_GCE_VM} from ${current_type} to g2-standard-32..."
+          vm_region="${_GCE_ZONE%-*}"
+          current_ip="$(gcloud compute instances describe ${_GCE_VM} --zone=${_GCE_ZONE} --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
+          if [ -n "${current_ip}" ]; then
+            gcloud compute addresses create "${_GCE_VM}-ip" --region="${vm_region}" --addresses="${current_ip}" --quiet || true
+          fi
+          gcloud compute instances stop ${_GCE_VM} --zone=${_GCE_ZONE} --quiet
+          gcloud compute instances set-machine-type ${_GCE_VM} --zone=${_GCE_ZONE} --machine-type=g2-standard-32 --quiet
+          gcloud compute instances start ${_GCE_VM} --zone=${_GCE_ZONE} --quiet
+          for attempt in $(seq 1 30); do
+            gcloud compute ssh ${_GCE_VM} --zone=${_GCE_ZONE} --command='echo ssh-ready' --quiet && break
+            sleep 10
+          done
+        else
+          echo "${_GCE_VM} is already g2-standard-32"
+        fi
+    waitFor: [push-backend]
+
+  # ── 6b. Copy compose file + init SQL from Cloud Build workspace to VM ────────
   - id: scp-compose
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
@@ -93,9 +121,9 @@ steps:
       - |
         gcloud compute scp /workspace/docker-compose.yml ${_GCE_VM}:/tmp/docker-compose.yml --zone=${_GCE_ZONE} &&
         gcloud compute scp /workspace/scripts/init-db.sql ${_GCE_VM}:/tmp/init-db.sql --zone=${_GCE_ZONE}
-    waitFor: [push-backend]
+    waitFor: [ensure-backend-machine-type]
 
-  # ── 6b. Pull new images and restart containers ───────────────────────────────
+  # ── 6c. Pull new images and restart containers ───────────────────────────────
   - id: deploy-backend
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud

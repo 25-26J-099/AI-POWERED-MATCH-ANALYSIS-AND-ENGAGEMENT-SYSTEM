@@ -43,7 +43,7 @@ class DetectionConfig:
     ball_confidence: float = 0.12       # Lower for robust ball tracking
     iou_threshold: float = 0.45
     input_size: int = 640
-    batch_size: int = 4
+    batch_size: int = settings.YOLO_BATCH_SIZE
     person_class_id: int = 0
     ball_class_id: int = 32
     device: str = "cuda"  # Explicit GPU — _resolve_device() falls back to CPU if unavailable
@@ -363,7 +363,7 @@ class OptimizationConfig:
     enable_quantization: bool = False
     quantization_type: str = "int8"
     enable_multithreading: bool = True
-    num_worker_threads: int = 4
+    num_worker_threads: int = settings.ANALYSIS_CPU_THREADS
     target_fps: int = 15
     frame_skip: int = 1
     max_input_width: int = 1280

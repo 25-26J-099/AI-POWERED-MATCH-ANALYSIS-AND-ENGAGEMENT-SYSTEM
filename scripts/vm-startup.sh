@@ -132,14 +132,19 @@ MLFLOW_TRACKING_URI=http://mlflow:5001
 PREFECT_API_KEY=${PREFECT_API_KEY}
 PREFECT_API_URL=${PREFECT_API_URL}
 FORCE_CPU=false
-# YOLO stays on GPU — all other tasks routed to CPU to avoid L4 contention
-GNN_DEVICE=cpu
-FASTREID_DEVICE=cpu
+# One L4 job at a time; YOLO runs batched on CUDA, CPU work uses visible CPUs
+ANALYSIS_MAX_WORKERS=1
+YOLO_BATCH_SIZE=16
+ANALYSIS_CPU_THREADS=0
+NVIDIA_VISIBLE_DEVICES=all
+NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+GNN_DEVICE=auto
+FASTREID_DEVICE=auto
 FASTREID_ENABLED=true
-TORCHREID_DEVICE=cpu
+TORCHREID_DEVICE=auto
 TORCHREID_ALLOW_CPU=true
-OCR_USE_GPU=false
-ML_CLASSIFIER_DEVICE=cpu
+OCR_USE_GPU=true
+ML_CLASSIFIER_DEVICE=auto
 REID_EMBEDDING_UPDATE_INTERVAL=10
 OCR_UPDATE_INTERVAL=20
 CORS_ORIGINS=["http://localhost","http://localhost:80","http://localhost:3000","https://football-ai-frontend-*.run.app"]

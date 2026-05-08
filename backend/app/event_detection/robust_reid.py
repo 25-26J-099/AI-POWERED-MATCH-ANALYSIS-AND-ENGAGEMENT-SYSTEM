@@ -311,6 +311,8 @@ class RobustReIDSystem:
             return {}
 
         detection_embeddings: Dict[int, Optional[np.ndarray]] = {}
+        embedding_track_ids: list[int] = []
+        embedding_crops: list[np.ndarray] = []
         for det_id, track in tracks.items():
             if track.is_ball or track.is_referee:
                 continue
@@ -320,9 +322,23 @@ class RobustReIDSystem:
             )
             if should_update_embedding:
                 crop = self.reid_model.crop_player(frame, track.bbox)
-                detection_embeddings[det_id] = self.reid_model.extract_embedding(crop)
+                if crop is not None:
+                    embedding_track_ids.append(det_id)
+                    embedding_crops.append(crop)
+                detection_embeddings[det_id] = None
             else:
                 detection_embeddings[det_id] = None
+
+        if embedding_crops:
+            if hasattr(self.reid_model, "extract_embeddings"):
+                embeddings = self.reid_model.extract_embeddings(embedding_crops)
+            else:
+                embeddings = [
+                    self.reid_model.extract_embedding(crop)
+                    for crop in embedding_crops
+                ]
+            for det_id, embedding in zip(embedding_track_ids, embeddings):
+                detection_embeddings[det_id] = embedding
 
         stable_tracks = {}
         assigned_identity_ids: Set[int] = set()

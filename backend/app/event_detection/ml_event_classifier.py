@@ -59,9 +59,7 @@ class MLEventDetector:
     """ML-based event detection using trained neural network"""
     
     def __init__(self, model_path: str = None, config=None):
-        # Use CPU by default — lightweight LSTM classifier; GPU transfer overhead
-        # exceeds inference time for small feature windows. GPU reserved for YOLO.
-        self.device = getattr(settings, "ML_CLASSIFIER_DEVICE", "cpu")
+        self.device = self._resolve_device(getattr(settings, "ML_CLASSIFIER_DEVICE", "auto"))
         self.model = EventClassifier().to(self.device)
         self.window_size = 16  # frames
         self.feature_buffer = []
@@ -77,6 +75,15 @@ class MLEventDetector:
             "ball_recovery", "duel", "miscontrol", "dispossessed",
             "goalkeeper_save", "foul", "set_piece", "sprint", "other"
         ]
+
+    @staticmethod
+    def _resolve_device(requested: str) -> str:
+        requested = str(requested or "auto").lower()
+        if requested == "auto":
+            return "cuda" if torch.cuda.is_available() else "cpu"
+        if requested.startswith("cuda") and not torch.cuda.is_available():
+            return "cpu"
+        return requested
     
     def extract_features(self, player_tracks, ball_track, possessor_id) -> np.ndarray:
         """
@@ -145,7 +152,7 @@ class MLEventDetector:
         x = torch.from_numpy(x).unsqueeze(0).to(self.device)
         
         # Predict
-        with torch.no_grad():
+        with torch.inference_mode():
             logits = self.model(x)
             probs = torch.softmax(logits, dim=1)
             confidences, predictions = torch.max(probs, dim=1)

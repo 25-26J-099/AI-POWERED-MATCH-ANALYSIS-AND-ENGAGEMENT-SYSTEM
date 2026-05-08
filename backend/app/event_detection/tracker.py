@@ -94,6 +94,8 @@ class YOLODetector:
         self._initialized = False
         self._hog = None
         self._bg_subtractor = None
+        self._yolo_device = "cpu"
+        self._yolo_half = False
 
     def initialize(self):
         """Load detection model with automatic backend selection."""
@@ -105,6 +107,7 @@ class YOLODetector:
             from ultralytics import YOLO
             device = self._resolve_device()
             self._yolo_device = device  # store — must be passed at inference time too
+            self._yolo_half = device == "cuda"
 
             logger.info(f"Loading YOLO model: {self.cfg.model_name} on {device}")
             self.model = YOLO(self.cfg.model_name)
@@ -112,9 +115,25 @@ class YOLODetector:
             # inference device from call kwargs — NOT from weight location.
             # We must pass device= explicitly in every self.model() call.
             self.model.to(device)
+            try:
+                self.model.fuse()
+            except Exception:
+                pass
+            if device == "cuda":
+                try:
+                    import torch
+                    torch.backends.cudnn.benchmark = True
+                    torch.set_float32_matmul_precision("high")
+                except Exception:
+                    pass
             self._backend = "ultralytics"
             self._initialized = True
-            logger.info("[OK] Using Ultralytics YOLOv8 backend on device: %s", device)
+            logger.info(
+                "[OK] Using Ultralytics YOLOv8 backend on device: %s half=%s batch_size=%s",
+                device,
+                self._yolo_half,
+                getattr(self.cfg, "batch_size", 1),
+            )
             return
         except (ImportError, Exception) as e:
             logger.info(f"Ultralytics not available ({e}), trying fallbacks...")
@@ -181,6 +200,49 @@ class YOLODetector:
         )
         return "cuda"
 
+    def _ultralytics_kwargs(self, batch_size: int = 1) -> dict:
+        min_conf = min(self.cfg.player_confidence, self.cfg.ball_confidence)
+        return {
+            "conf": min_conf,
+            "iou": self.cfg.iou_threshold,
+            "imgsz": self.cfg.input_size,
+            "device": self._yolo_device,
+            "half": self._yolo_half,
+            "classes": [self.cfg.person_class_id, self.cfg.ball_class_id],
+            "batch": max(1, int(batch_size)),
+            "verbose": False,
+        }
+
+    def _detections_from_ultralytics_result(self, result) -> List[Detection]:
+        detections = []
+        if result.boxes is None:
+            return detections
+
+        for box in result.boxes:
+            cls_id = int(box.cls[0])
+            conf = float(box.conf[0])
+            xyxy = box.xyxy[0].detach().cpu().numpy()
+
+            if cls_id == self.cfg.person_class_id:
+                if conf < self.cfg.player_confidence:
+                    continue
+                class_name = "player"
+            elif cls_id == self.cfg.ball_class_id:
+                if conf < self.cfg.ball_confidence:
+                    continue
+                class_name = "ball"
+            else:
+                continue
+
+            detections.append(Detection(
+                bbox=(float(xyxy[0]), float(xyxy[1]),
+                      float(xyxy[2]), float(xyxy[3])),
+                confidence=conf,
+                class_id=cls_id,
+                class_name=class_name,
+            ))
+        return detections
+
     def _detect_ultralytics(self, frame: np.ndarray) -> List[Detection]:
         """
         Detection using Ultralytics YOLOv8 with class-specific confidence filtering.
@@ -188,48 +250,23 @@ class YOLODetector:
         Uses lowest threshold for YOLO inference, then applies class-specific
         thresholds for optimal per-class performance.
         """
-        # Use minimum threshold for YOLO (we'll filter by class later)
-        min_conf = min(self.cfg.player_confidence, self.cfg.ball_confidence)
-        
         # device= MUST be passed here — ultralytics resolves inference device from
         # call kwargs, not from where model weights are. Omitting it causes CPU
         # inference even when the model is loaded on GPU.
         results = self.model(
             frame,
-            conf=min_conf,  # Low threshold to catch all candidates
-            iou=self.cfg.iou_threshold,
-            imgsz=self.cfg.input_size,
-            device=getattr(self, '_yolo_device', 'cuda'),
-            verbose=False,
+            **self._ultralytics_kwargs(batch_size=1),
         )[0]
+        return self._detections_from_ultralytics_result(results)
 
-        detections = []
-        if results.boxes is not None:
-            for box in results.boxes:
-                cls_id = int(box.cls[0])
-                conf = float(box.conf[0])
-                xyxy = box.xyxy[0].cpu().numpy()
-
-                # Apply class-specific confidence thresholds
-                if cls_id == self.cfg.person_class_id:
-                    if conf < self.cfg.player_confidence:
-                        continue  # Reject low-confidence players
-                    class_name = "player"
-                elif cls_id == self.cfg.ball_class_id:
-                    if conf < self.cfg.ball_confidence:
-                        continue  # Reject low-confidence balls
-                    class_name = "ball"
-                else:
-                    continue
-
-                detections.append(Detection(
-                    bbox=(float(xyxy[0]), float(xyxy[1]),
-                          float(xyxy[2]), float(xyxy[3])),
-                    confidence=conf,
-                    class_id=cls_id,
-                    class_name=class_name,
-                ))
-        return detections
+    def _detect_ultralytics_batch(self, frames: List[np.ndarray]) -> List[List[Detection]]:
+        if not frames:
+            return []
+        results = self.model(
+            frames,
+            **self._ultralytics_kwargs(batch_size=min(len(frames), int(getattr(self.cfg, "batch_size", 1) or 1))),
+        )
+        return [self._detections_from_ultralytics_result(result) for result in results]
 
     def _detect_opencv_dnn(self, frame: np.ndarray) -> List[Detection]:
         """Detection using OpenCV DNN backend."""
@@ -369,6 +406,13 @@ class YOLODetector:
 
     def detect_batch(self, frames: List[np.ndarray]) -> List[List[Detection]]:
         """Run detection on a batch of frames."""
+        if not frames:
+            return []
+        if not self._initialized:
+            self.initialize()
+
+        if self._backend == "ultralytics":
+            return self._detect_ultralytics_batch(frames)
         return [self.detect(f) for f in frames]
 
 
@@ -409,8 +453,8 @@ class ByteTrackTracker:
                 )
             self._use_supervision = True
             logger.info("[OK] Using supervision ByteTrack")
-        except ImportError:
-            logger.info("[OK] Using custom ByteTrack implementation")
+        except Exception as exc:
+            logger.info("[OK] Using custom ByteTrack implementation (supervision unavailable: %s)", exc)
             self._use_supervision = False
 
     def _iou(self, bbox1, bbox2) -> float:
@@ -834,7 +878,15 @@ class PlayerBallTracker:
         """
         # Detect objects
         detections = self.detector.detect(frame)
+        return self.process_detections(frame, detections, frame_idx)
 
+    def process_detections(
+        self,
+        frame: np.ndarray,
+        detections: List[Detection],
+        frame_idx: int = 0,
+    ) -> Tuple[Dict[int, Track], Optional[Track]]:
+        """Update player and ball trackers from precomputed detections."""
         # Separate player and ball detections
         player_dets = [d for d in detections if d.class_name == "player"]
         ball_dets = [d for d in detections if d.class_name == "ball"]

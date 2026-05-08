@@ -40,10 +40,14 @@ class MLEventDetector:
         self.config = config
         
         # Determine device
-        if device == 'auto':
+        requested_device = str(device or "auto").lower()
+        if requested_device == 'auto':
             self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        elif requested_device.startswith("cuda") and not torch.cuda.is_available():
+            logger.warning("[ML Detector] CUDA requested but unavailable; using CPU")
+            self.device = "cpu"
         else:
-            self.device = device
+            self.device = requested_device
         
         # Load model
         self._load_model(weights_path)
@@ -174,7 +178,7 @@ class MLEventDetector:
             frames = frames.to(self.device)
             
             # Run inference
-            with torch.no_grad():
+            with torch.inference_mode():
                 logits = self.model(frames)  # [1, num_classes]
                 probs = torch.softmax(logits, dim=1)
             
@@ -298,7 +302,7 @@ def integrate_ml_detector_into_pipeline(pipeline, weights_path):
         ml_detector = MLEventDetector(
             weights_path=weights_path,
             config=pipeline.config,
-            device='cpu'   # GPU reserved for YOLO; CNN event detector runs fine on CPU
+            device=getattr(pipeline.config.ml_model, "ml_device", "auto"),
         )
         
         # Create hybrid system

@@ -55,15 +55,22 @@ services:
       SOX_BINARY: sox
       GCS_BUCKET: ${GCS_BUCKET:-}
       MLFLOW_TRACKING_URI: http://mlflow:5001
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      # Throughput tuning: one L4 job at a time, batched YOLO inference
+      ANALYSIS_MAX_WORKERS: "1"
+      YOLO_BATCH_SIZE: "16"
+      ANALYSIS_CPU_THREADS: "0"
       # Speed optimisation: reduce CPU-heavy ops frequency
       REID_EMBEDDING_UPDATE_INTERVAL: "10"
       OCR_UPDATE_INTERVAL: "20"
-      # Route all non-YOLO tasks to CPU — GPU reserved for YOLO detection only
-      FASTREID_DEVICE: "cpu"
-      TORCHREID_DEVICE: "cpu"
+      # CUDA-capable model pieces use GPU when available and fall back cleanly
+      GNN_DEVICE: "auto"
+      FASTREID_DEVICE: "auto"
+      TORCHREID_DEVICE: "auto"
       TORCHREID_ALLOW_CPU: "true"
-      OCR_USE_GPU: "false"
-      ML_CLASSIFIER_DEVICE: "cpu"
+      OCR_USE_GPU: "true"
+      ML_CLASSIFIER_DEVICE: "auto"
     volumes:
       - appdata:/data
     ports:

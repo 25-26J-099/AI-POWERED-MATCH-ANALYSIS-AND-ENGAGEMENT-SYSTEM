@@ -1,4 +1,4 @@
-# Linux/CUDA backend dependencies for GCP Compute Engine (A100 GPU).
+# Linux/CUDA backend dependencies for GCP Compute Engine (NVIDIA L4 / G2 VM).
 # PyTorch: CUDA 12.4 Linux wheels (compatible with CUDA 12.4.1 driver).
 # FastReID fully enabled (unlike macOS which falls back to torchreid).
 # faiss-gpu replaces faiss-cpu for GPU-accelerated Re-ID gallery search.

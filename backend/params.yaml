@@ -1,0 +1,23 @@
+# DVC hyperparameter file — edit here and run `dvc repro` to retrain.
+
+dq:
+  n_samples: 20000
+  seed: 42
+
+xg:
+  n_samples: 30000
+  seed: 42
+
+vaep:
+  n_samples: 40000
+  seed: 42
+
+style:
+  n_samples: 5000
+  n_clusters: 5
+  embedding_dim: 8
+  epochs: 50
+  seed: 42
+
+audience:
+  seed: 42

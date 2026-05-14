@@ -1,10 +1,12 @@
 """Full analysis pipeline — runs as a background task after upload."""
 
+import time
 import traceback
 from collections import defaultdict
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.settings import settings
 from app.database.database import async_session
 from app.models.models import Match, Event, Player, Team, PlayerStats, PlayerEmbedding
 from app.services.event_parser import parse_events
@@ -13,6 +15,22 @@ from app.analytics.vaep import compute_match_vaep_values
 from app.analytics.ratings import compute_rating
 from app.analytics.embeddings import compute_embeddings
 from app.services.commentary_service import generate_commentary
+
+
+def _mlflow_log_match(match_id: int, metrics: dict, params: dict) -> None:
+    """Log a completed match-analytics run to MLflow (no-op if not configured)."""
+    if not settings.MLFLOW_TRACKING_URI:
+        return
+    try:
+        import mlflow
+        mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
+        mlflow.set_experiment(settings.MLFLOW_EXPERIMENT_NAME)
+        with mlflow.start_run(run_name=f"match-{match_id}"):
+            mlflow.log_params(params)
+            mlflow.log_metrics(metrics)
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("MLflow logging failed (non-fatal): %s", exc)
 
 
 async def _update_status(session: AsyncSession, match_id: int, status: str, detail: str):
@@ -65,6 +83,7 @@ async def run_full_pipeline(match_id: int):
     import logging
     logger = logging.getLogger(__name__)
     logger.info("🚀 run_full_pipeline started for match_id=%s", match_id)
+    _pipeline_start = time.time()
 
     async with async_session() as session:
         try:
@@ -237,6 +256,38 @@ async def run_full_pipeline(match_id: int):
 
             # Note: `generate_commentary` updates the final status to 'completed'.
             logger.info("✅ match_id=%s: Pipeline triggered commentary", match_id)
+
+            # ── MLflow experiment tracking ────────────────────────────────
+            _pipeline_elapsed = time.time() - _pipeline_start
+            _n_players = len(player_stats_records)
+            _avg_xg = (
+                sum(ps.xg or 0 for ps in player_stats_records) / _n_players
+                if _n_players else 0.0
+            )
+            _avg_vaep = (
+                sum(ps.vaep or 0 for ps in player_stats_records) / _n_players
+                if _n_players else 0.0
+            )
+            _avg_rating = (
+                sum(ps.rating or 0 for ps in player_stats_records) / _n_players
+                if _n_players else 0.0
+            )
+            _mlflow_log_match(
+                match_id=match_id,
+                params={
+                    "match_id": str(match_id),
+                    "n_events": str(len(events)),
+                    "n_players": str(_n_players),
+                },
+                metrics={
+                    "total_events": float(len(events)),
+                    "players_analyzed": float(_n_players),
+                    "avg_xg_per_player": round(_avg_xg, 4),
+                    "avg_vaep_per_player": round(_avg_vaep, 4),
+                    "avg_rating": round(_avg_rating, 4),
+                    "pipeline_duration_seconds": round(_pipeline_elapsed, 2),
+                },
+            )
 
         except Exception as e:
             traceback.print_exc()

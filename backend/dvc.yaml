@@ -1,9 +1,12 @@
 # DVC pipeline stages — run with: dvc repro
-# Data and model artifacts are tracked in gs://football-ai-storage/dvc-store/
+#
+# Each stage generates synthetic training data when the real CSV isn't present,
+# so `dvc repro` works out of the box even without a labelled dataset.
 #
 # To run a specific stage:  dvc repro <stage_name>
 # To push all artifacts:    dvc push
 # To pull all artifacts:    dvc pull
+# To view the DAG:          dvc dag
 
 stages:
 
@@ -12,7 +15,10 @@ stages:
     cmd: python scripts/train_dq.py
     deps:
       - scripts/train_dq.py
-      - data/final_dataset.csv
+    params:
+      - params.yaml:
+          - dq.n_samples
+          - dq.seed
     outs:
       - data/dq_model.pkl
       - data/dq_scaler.pkl
@@ -25,7 +31,10 @@ stages:
     cmd: python scripts/train_xg.py
     deps:
       - scripts/train_xg.py
-      - data/shots_dataset.csv
+    params:
+      - params.yaml:
+          - xg.n_samples
+          - xg.seed
     outs:
       - model_cache/xg_model.pkl
     metrics:
@@ -37,7 +46,10 @@ stages:
     cmd: python scripts/train_vaep.py
     deps:
       - scripts/train_vaep.py
-      - data/vaep_dataset.csv
+    params:
+      - params.yaml:
+          - vaep.n_samples
+          - vaep.seed
     outs:
       - model_cache/vaep_score_model_2.pkl
       - model_cache/vaep_concede_model_2.pkl
@@ -50,7 +62,13 @@ stages:
     cmd: python scripts/train_style.py
     deps:
       - scripts/train_style.py
-      - data/player_style_dataset.csv
+    params:
+      - params.yaml:
+          - style.n_samples
+          - style.n_clusters
+          - style.embedding_dim
+          - style.epochs
+          - style.seed
     outs:
       - model_cache/style_scaler.pkl
       - model_cache/style_autoencoder.pth
@@ -58,3 +76,15 @@ stages:
     metrics:
       - metrics/style_metrics.json:
           cache: false
+
+  # ── Audience commentary model ─────────────────────────────────────────────
+  audience_model:
+    cmd: python scripts/train_audience_model.py
+    deps:
+      - scripts/train_audience_model.py
+      - app/commentary/adaptive.py
+    params:
+      - params.yaml:
+          - audience.seed
+    outs:
+      - app/commentary/audience_model.json

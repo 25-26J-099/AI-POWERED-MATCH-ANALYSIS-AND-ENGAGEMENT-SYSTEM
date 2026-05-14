@@ -71,6 +71,22 @@ class Settings(BaseSettings):
         description="MLflow tracking server URI (e.g. http://mlflow:5000). "
                     "When set, model_loader falls back to the registry if HF download fails.",
     )
+    MLFLOW_EXPERIMENT_NAME: str = Field(
+        default="match-analysis",
+        description="MLflow experiment name for per-match analytics runs.",
+    )
+
+    # ── Prefect (workflow orchestration) ──────────────────────────────────────
+    PREFECT_API_URL: Optional[str] = Field(
+        default=None,
+        description="Prefect Cloud API URL "
+                    "(https://api.prefect.cloud/api/accounts/<id>/workspaces/<id>). "
+                    "When set, pipeline flows are tracked in Prefect Cloud.",
+    )
+    PREFECT_API_KEY: Optional[str] = Field(
+        default=None,
+        description="Prefect Cloud API key. Required when PREFECT_API_URL is set.",
+    )
 
     # ── GPU / Deployment ──────────────────────────────────────────────────
     GPU_PROVIDER: Optional[str] = Field(default=None, description="GPU provider: 'vastai', 'runpod', or None for local")

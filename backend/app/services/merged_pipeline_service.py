@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,26 @@ from app.services.dependencies import get_job_service
 from app.services.pipeline import ingest_events, run_full_pipeline
 
 logger = logging.getLogger(__name__)
+
+# ── Prefect setup ─────────────────────────────────────────────────────────────
+# Inject Prefect Cloud credentials from app settings into the environment so the
+# Prefect client picks them up automatically.  Must happen before first import of
+# prefect.flow / prefect.task.
+if settings.PREFECT_API_URL:
+    os.environ.setdefault("PREFECT_API_URL", settings.PREFECT_API_URL)
+if settings.PREFECT_API_KEY:
+    os.environ.setdefault("PREFECT_API_KEY", settings.PREFECT_API_KEY)
+
+try:
+    from prefect import flow as _prefect_flow, task as _prefect_task
+    _PREFECT_OK = True
+except Exception:  # noqa: BLE001
+    _PREFECT_OK = False
+    # Transparent no-op fallbacks so the rest of the module stays identical.
+    def _prefect_flow(*a, **kw):  # type: ignore[misc]
+        return (lambda f: f) if not a or not callable(a[0]) else a[0]
+    def _prefect_task(*a, **kw):  # type: ignore[misc]
+        return (lambda f: f) if not a or not callable(a[0]) else a[0]
 
 
 async def _update_match(match_id: int, **updates: Any) -> None:
@@ -76,6 +97,28 @@ def _load_statsbomb_events(statsbomb_path: str | Path) -> list[dict]:
     else:
         events = []
     return [event for event in events if isinstance(event, dict)]
+
+
+@_prefect_task(name="ingest-statsbomb-events", retries=0)
+async def _ingest_events_task(match_id: int, raw_events: list) -> int:
+    """Prefect task — ingest raw StatsBomb events into the database."""
+    return await ingest_events(match_id, raw_events)
+
+
+@_prefect_task(name="run-analytics-pipeline", retries=0)
+async def _run_analytics_task(match_id: int) -> None:
+    """Prefect task — run the full Component 4 analytics pipeline."""
+    await run_full_pipeline(match_id)
+
+
+@_prefect_flow(name="match-analytics-flow", log_prints=True)
+async def _analytics_flow(match_id: int, raw_events: list) -> None:
+    """Prefect flow — wraps event ingestion + analytics so every match run is
+    visible in Prefect Cloud (or local Prefect UI) with task-level timing."""
+    n = await _ingest_events_task(match_id, raw_events)
+    logger.info("Prefect: ingested %s events for match_id=%s", n, match_id)
+    await _run_analytics_task(match_id)
+    logger.info("Prefect: analytics complete for match_id=%s", match_id)
 
 
 async def process_match_video(
@@ -197,10 +240,10 @@ async def monitor_tracking_job(match_id: int, tracking_job_id: str) -> None:
             status_detail="StatsBomb events received. Launching Component 4 analytics...",
             tracking_artifacts=tracking_artifacts,
         )
-        await ingest_events(match_id, raw_events)
-        logger.info("Event ingestion complete for match_id=%s", match_id)
-        await run_full_pipeline(match_id)
-        logger.info("Component 4 analytics pipeline complete for match_id=%s", match_id)
+        # Run ingestion + analytics wrapped in a Prefect flow so every match
+        # appears as a tracked run in Prefect Cloud (or local UI).
+        await _analytics_flow(match_id, raw_events)
+        logger.info("Prefect analytics flow complete for match_id=%s", match_id)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Merged pipeline failed after tracking for match_id=%s", match_id)
         await _update_match(match_id, status="failed", status_detail=f"Merged pipeline failed: {exc}")
